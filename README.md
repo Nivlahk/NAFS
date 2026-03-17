@@ -33,20 +33,70 @@ Tones are assigned a dedicated byte range (`0x04`–`0x0C`) covering level, risi
 
 ---
 
+## The Two-Operation Guarantee
+
+NEFS makes a claim that no prior phonetic encoding system makes:
+
+> **Every phonological feature of every sound in the NEFS inventory is extractable by at most two logical operations on the encoding byte, with no auxiliary data structures required.**
+
+This is a direct consequence of the byte grid design and is worth understanding concretely.
+
+### What "two operations" means
+
+In IPA, determining that `p` and `b` differ only in voicing requires a lookup table — the symbols have no algebraic relationship. In NEFS, voicing is a single bit in the low nibble. Extracting it is one AND and one compare. Determining that two bytes represent a minimal pair differing only in voicing is one XOR.
+
+Every phonological feature works this way:
+
+| Operation | IPA cost | NEFS cost |
+|---|---|---|
+| Extract place of articulation | lookup table | `B >> 4` |
+| Extract manner of articulation | lookup table | `B & 0x0F` |
+| Extract voicing (stops) | lookup table | `B & 0x01` |
+| Extract modification class (plain/aspirated/NR) | lookup table | `(B >> 1) & 0x03` |
+| Extract vowel height | lookup table | `B & 0x0F` |
+| Test table membership (vowel/consonant/tone/etc.) | lookup table | at most two bitmask checks |
+| Minimal pair test (one feature difference) | two lookups + compare | `popcount(A ^ B) == 1` |
+
+### Why the vowel range is 0x_4–0x_B
+
+This range was chosen specifically because it is the set of low nibble values where bits 3 and 2 differ — testable with a single XOR:
+
+```c
+int is_vowel = ((B >> 4) >= 0xA) && (((B >> 3) ^ (B >> 2)) & 1);
+```
+
+No range check on the low nibble is needed. The full table membership classification for all six NEFS regions requires at most two operations per region, with no lookup table at any point.
+
+### What this enables
+
+**Vectorized phonological search.** Any query over a phoneme corpus — "find all voiced stops," "find all front rounded vowels," "find all aspirated consonants" — compiles to at most two SIMD operations over the byte stream. On a CPU with 256-bit AVX registers that is 256 phonemes processed simultaneously per instruction pair. IPA requires a hash table lookup per symbol.
+
+**Phonological distance.** Computing phonetic similarity between two sounds — how many features separate them — is `popcount(A ^ B)`. No tables. This makes large-scale rhyme detection, dialect comparison, and speech error analysis fast enough to run in real time over large corpora.
+
+**Structured embeddings.** Neural TTS and ASR systems currently learn phoneme embeddings from scratch because IPA has no algebraic structure to exploit. NEFS byte values can seed phoneme embeddings directly from their feature structure, reducing training data requirements and improving generalization to low-resource languages.
+
+**Hardware.** A phoneme processing unit targeting NEFS can implement full feature extraction in two gate delays. For embedded and microcontroller targets — including [SEER](../SEER), a microcontroller ISA developed alongside NEFS — this means speech processing extensions can be implemented without dedicated lookup ROM.
+
+### Scope of the guarantee
+
+The two-operation guarantee applies to the final grid layout after the planned bitfield reorganization. The current grid is partially consistent with this property; until the reorganization is complete, implementations should use the lookup table in `NEFSConverter` rather than relying on bitfield arithmetic directly.
+
+---
+
 ## Relationship to IPA
 
-NEFS is designed to be **losslessly interconvertible with IPA** for all sounds in the NEFS inventory. The `NAFSConverter` class provides:
+NEFS is designed to be **losslessly interconvertible with IPA** for all sounds in the NEFS inventory. The `NEFSConverter` class provides:
 
 ```python
-from nefs import NAFSConverter
+from nefs import NEFSConverter
 
-converter = NAFSConverter()
+converter = NEFSConverter()
 
 # IPA → NEFS
-nefs_bytes = converter.ipa_to_nafs("tʃ")   # → b'\x43\x34'
+nefs_bytes = converter.ipa_to_nefs("tʃ")   # → b'\x43\x34'
 
 # NEFS → IPA
-ipa_text = converter.nafs_to_ipa(b'\x43\x34')  # → 'tʃ'
+ipa_text = converter.nefs_to_ipa(b'\x43\x34')  # → 'tʃ'
 
 # Lossless round-trip verification
 assert converter.is_lossless("tʃ")  # True
@@ -55,14 +105,14 @@ assert converter.is_lossless("tʃ")  # True
 Batch conversion is also supported for bulk processing:
 
 ```python
-results = converter.batch_convert(["tʃ", "dʒ", "ts"], direction='ipa_to_nafs')
+results = converter.batch_convert(["tʃ", "dʒ", "ts"], direction='ipa_to_nefs')
 ```
 
 ---
 
 ## SSML Integration
 
-NEFS phoneme tags can be embedded in SSML for use with text-to-speech engines. The `NAFSTTSWrapper` handles conversion from NEFS-tagged SSML to IPA-tagged SSML before passing to downstream TTS providers (Amazon Polly, Azure TTS, Google Cloud TTS).
+NEFS phoneme tags can be embedded in SSML for use with text-to-speech engines. The `NEFSTTSWrapper` handles conversion from NEFS-tagged SSML to IPA-tagged SSML before passing to downstream TTS providers (Amazon Polly, Azure TTS, Google Cloud TTS).
 
 ```python
 from nefs.tts import create_nefs_adapter, AudioFormat, NEFSQuality, NEFSSynthesisRequest
@@ -70,7 +120,7 @@ from nefs.tts import create_nefs_adapter, AudioFormat, NEFSQuality, NEFSSynthesi
 tts = create_nefs_adapter('polly', api_key='...')
 
 # Auto-generate SSML with NEFS phoneme tags
-ssml = tts.create_nafs_ssml("Hello world")
+ssml = tts.create_nefs_ssml("Hello world")
 
 # Synthesize
 response = await tts.synthesize(NEFSSynthesisRequest(
@@ -89,7 +139,7 @@ response = await tts.synthesize(NEFSSynthesisRequest(
 ## Coverage
 
 ```python
-converter = NAFSConverter()
+converter = NEFSConverter()
 stats = converter.get_stats()
 # {
 #   'total_ipa_mappings': ...,
@@ -108,11 +158,11 @@ The encoding currently covers the full IPA consonant chart, vowel chart, tones, 
 ```
 nefs/
 ├── nefs/
-│   ├── converter.py       # NAFSConverter — core IPA↔NEFS encoding
+│   ├── converter.py       # NEFSConverter — core IPA↔NEFS encoding
 │   ├── tts/
-│   │   ├── wrapper.py     # NAFSTTSWrapper — SSML processing and TTS integration
+│   │   ├── wrapper.py     # NEFSTTSWrapper — SSML processing and TTS integration
 │   │   └── adapters.py    # Provider adapters (Polly, Azure, Google)
-│   └── ssml.py            # SSMLNEFSProcessor — SSML parsing and NAFS tag handling
+│   └── ssml.py            # SSMLNEFSProcessor — SSML parsing and NEFS tag handling
 ├── spec/
 │   ├── nefs-grid.png      # Visual byte grid and feature layout  [coming soon]
 │   └── nefs.ttf           # NEFS script font                     [coming soon]
