@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEFS — New Engineered Featural Script</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #111118;
+            --surface2: #18181f;
+            --border: #2a2a38;
+            --accent: #7c6dfa;
+            --accent2: #a78bfa;
+            --green: #34d399;
+            --amber: #fbbf24;
+            --red: #f87171;
+            --text: #e8e8f0;
+            --muted: #6b6b80;
+            --mono: 'DM Mono', monospace;
+            --sans: 'Syne', sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        /* Subtle grid texture */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(var(--border) 1px, transparent 1px),
+                linear-gradient(90deg, var(--border) 1px, transparent 1px);
+            background-size: 40px 40px;
+            opacity: 0.15;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .wrapper {
+            position: relative;
+            z-index: 1;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        header {
+            margin-bottom: 48px;
+        }
+
+        .eyebrow {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--accent);
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        h1 {
+            font-size: clamp(2.4rem, 6vw, 4rem);
+            font-weight: 800;
+            letter-spacing: -1px;
+            line-height: 1;
+            margin-bottom: 12px;
+        }
+
+        h1 span {
+            color: var(--accent2);
+        }
+
+        .subtitle {
+            font-family: var(--mono);
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.7;
+            max-width: 560px;
+        }
+
+        /* Input section */
+        .input-section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+
+        .input-label {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .input-row {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-family: var(--mono);
+            font-size: 14px;
+            color: var(--text);
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--accent);
+        }
+
+        input[type="text"]::placeholder {
+            color: var(--muted);
+        }
+
+        .btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 22px;
+            font-family: var(--sans);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+
+        .btn:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
+        .btn:active:not(:disabled) { transform: translateY(0); }
+        .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .hint {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 10px;
+        }
+
+        /* Results panel */
+        #results { display: none; }
+        #results.show { display: block; }
+
+        /* Pipeline display */
+        .pipeline {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr auto 1fr;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .pipeline-arrow {
+            color: var(--muted);
+            font-size: 18px;
+            text-align: center;
+        }
+
+        .pipeline-step {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+        }
+
+        .pipeline-step.active {
+            border-color: var(--accent);
+        }
+
+        .step-label {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .step-value {
+            font-family: var(--mono);
+            font-size: 12px;
+            color: var(--text);
+            word-break: break-all;
+            line-height: 1.6;
+            min-height: 20px;
+        }
+
+        .step-value.ipa { color: #93c5fd; }
+        .step-value.nefs { color: var(--accent2); }
+
+        /* Word list */
+        .section-header {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--muted);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .word-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .word-row {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            display: grid;
+            grid-template-columns: 140px 1fr 1fr auto;
+            align-items: center;
+            gap: 16px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .word-row:hover { border-color: var(--border); background: var(--surface2); }
+
+        .wr-word {
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--text);
+        }
+
+        .wr-cmu {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: #93c5fd;
+            word-break: break-all;
+        }
+
+        .wr-nefs {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--accent2);
+            word-break: break-all;
+        }
+
+        .wr-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+
+        .latency-badge {
+            font-family: var(--mono);
+            font-size: 10px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            padding: 3px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .play-btn {
+            background: var(--green);
+            color: #0a0a0f;
+            border: none;
+            border-radius: 5px;
+            padding: 5px 10px;
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .play-btn:hover { opacity: 0.8; }
+
+        /* Stats bar */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .stat {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-val {
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: var(--accent2);
+            line-height: 1;
+            margin-bottom: 6px;
+        }
+
+        .stat-lbl {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--muted);
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+
+        /* Status messages */
+        .msg {
+            font-family: var(--mono);
+            font-size: 12px;
+            padding: 12px 14px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            line-height: 1.5;
+        }
+
+        .msg.ok { background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.25); color: var(--green); }
+        .msg.warn { background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.25); color: var(--amber); }
+        .msg.err { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.25); color: var(--red); }
+
+        /* Audio note */
+        .audio-note {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px 16px;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--muted);
+            line-height: 1.7;
+        }
+
+        .audio-note strong { color: var(--text); }
+
+        /* Responsive */
+        @media (max-width: 700px) {
+            .pipeline { grid-template-columns: 1fr; }
+            .pipeline-arrow { display: none; }
+            .word-row { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; }
+            .stats-bar { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+<div class="wrapper">
+
+    <header>
+        <div class="eyebrow">New Engineered Featural Script</div>
+        <h1>NEFS <span>Encoder</span></h1>
+        <p class="subtitle">
+            Text → CMU Phonemes → NEFS byte encoding.<br>
+            Each phoneme maps to a single byte; byte position encodes place &amp; manner of articulation.
+        </p>
+    </header>
+
+    <div class="input-section">
+        <div class="input-label">Input</div>
+        <div class="input-row">
+            <input type="text" id="textInput" placeholder="e.g., hello world, the ring was made in the fires of mount doom">
+            <button class="btn" onclick="convertAll()">Encode</button>
+        </div>
+        <div class="hint">Press Space to encode the last word as you type · or click Encode for the full phrase</div>
+    </div>
+
+    <div id="results">
+        <!-- Pipeline -->
+        <div class="pipeline" id="pipelineDisplay">
+            <div class="pipeline-step" id="ps-input">
+                <div class="step-label">Input</div>
+                <div class="step-value" id="ps-input-val">—</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step" id="ps-cmu">
+                <div class="step-label">CMU Phonemes</div>
+                <div class="step-value ipa" id="ps-cmu-val">—</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step active" id="ps-nefs">
+                <div class="step-label">NEFS bytes</div>
+                <div class="step-value nefs" id="ps-nefs-val">—</div>
+            </div>
+        </div>
+
+        <div id="statusMsg"></div>
+
+        <!-- Word list -->
+        <div class="section-header">Per-word breakdown</div>
+        <div class="word-list" id="wordList"></div>
+
+        <!-- Stats -->
+        <div class="stats-bar">
+            <div class="stat"><div class="stat-val" id="st-words">0</div><div class="stat-lbl">Words</div></div>
+            <div class="stat"><div class="stat-val" id="st-phonemes">0</div><div class="stat-lbl">Phonemes</div></div>
+            <div class="stat"><div class="stat-val" id="st-bytes">0</div><div class="stat-lbl">NEFS bytes</div></div>
+            <div class="stat"><div class="stat-val" id="st-errors">0%</div><div class="stat-lbl">Unmapped</div></div>
+        </div>
+
+        <!-- Audio note -->
+        <div class="audio-note">
+            <strong>Audio synthesis:</strong> The ▶ buttons play a tone-mapped audio preview generated from
+            the NEFS byte sequence via a simulated mel-spectrogram → HiFiGAN-style vocoder.
+            This is a stand-in for a real G2P → NEFS → TTS pipeline; full neural synthesis
+            integration is in progress (see <code>NAFSTTSWrapper</code> in the Python library).
+        </div>
+    </div>
+
+</div>
+
+<script>
+// ─── NEFS byte grid (mirrors NAFSConverter._create_mappings in Python) ────────
+// Keys are CMU Arpabet phonemes → NEFS hex byte(s)
+// Vowel mappings: CMU → nearest IPA → NEFS byte
+// Consonant mappings: CMU → NEFS byte
+const CMU_TO_NEFS = {
+    // Stops — voiced (0x20 row)
+    'B':  [0x20], 'D':  [0x23], 'G':  [0x27],
+    // Stops — voiceless (0x40 row)
+    'P':  [0x40], 'T':  [0x43], 'K':  [0x47],
+    // Affricates (two-byte sequences, consistent with Python affricate_mappings)
+    'CH': [0x43, 0x34],   // tʃ
+    'JH': [0x23, 0x14],   // dʒ
+    // Fricatives — voiced (0x10 row)
+    'V':  [0x11], 'DH': [0x12], 'Z':  [0x13], 'ZH': [0x14],
+    // Fricatives — voiceless (0x30 row)
+    'F':  [0x31], 'TH': [0x32], 'S':  [0x33], 'SH': [0x34], 'HH': [0x3B],
+    // Nasals (0x90 row)
+    'M':  [0x90], 'N':  [0x93], 'NG': [0x97],
+    // Approximants
+    'W':  [0xA0], 'Y':  [0xA6], 'R':  [0xA3], 'L':  [0xB3],
+    // Vowels — mapped to nearest NEFS vowel byte
+    // Front close
+    'IY': [0x49],   // i
+    'IH': [0x89],   // ɪ
+    // Front mid
+    'EY': [0x59],   // e
+    'EH': [0x69],   // ɛ
+    'AE': [0x8B],   // æ
+    // Central
+    'AH': [0x8E],   // ə / ʌ
+    'ER': [0x8E],   // ɚ (schwa-r)
+    // Back close
+    'UW': [0x4E],   // u
+    'UH': [0x8D],   // ʊ
+    // Back mid/open
+    'OW': [0x5E],   // o
+    'AO': [0x6E],   // ɔ
+    'AA': [0x7D],   // ɑ
+    // Diphthongs — use nucleus byte
+    'AY': [0x79],   // a + j (nucleus = a)
+    'AW': [0x79],   // a + w (nucleus = a)
+    'OY': [0x6E],   // ɔ + j (nucleus = ɔ)
+};
+
+// Stress digits in CMU (AH0, AH1, AH2) — strip stress marker before lookup
+function stripStress(phoneme) {
+    return phoneme.replace(/[012]$/, '');
+}
+
+function cmuToNefs(phonemes) {
+    const bytes = [];
+    let errors = 0;
+    for (const raw of phonemes) {
+        const p = stripStress(raw);
+        if (CMU_TO_NEFS[p]) {
+            bytes.push(...CMU_TO_NEFS[p]);
+        } else {
+            errors++;
+        }
+    }
+    return { bytes, errors };
+}
+
+// ─── 1,121-word CMU phoneme dictionary ───────────────────────────────────────
+const PHONEME_DICT = {"the":["DH","AH"],"a":["AH"],"an":["AE","N"],"and":["AE","N","D"],"or":["AO","R"],"but":["B","AH","T"],"not":["N","AO","T"],"no":["N","OW"],"yes":["Y","EH","S"],"of":["AH","V"],"to":["T","UW"],"in":["IH","N"],"at":["AE","T"],"by":["B","AY"],"for":["F","AO","R"],"from":["F","R","AH","M"],"with":["W","IH","TH"],"on":["AO","N"],"as":["AE","Z"],"into":["IH","N","T","UW"],"through":["TH","R","UW"],"during":["D","UH","R","IH","NG"],"before":["B","IH","F","AO","R"],"after":["AE","F","T","ER"],"above":["AH","B","AH","V"],"below":["B","IH","L","OW"],"up":["AH","P"],"down":["D","AW","N"],"out":["AW","T"],"over":["OW","V","ER"],"under":["AH","N","D","ER"],"about":["AH","B","AW","T"],"between":["B","IH","T","W","IY","N"],"among":["AH","M","AH","NG"],"around":["AH","R","AW","N","D"],"against":["AH","G","EH","N","S","T"],"toward":["T","AO","R","D"],"towards":["T","AO","R","D","Z"],"without":["W","IH","DH","AW","T"],"within":["W","IH","DH","IH","N"],"along":["AH","L","AO","NG"],"across":["AH","K","R","AO","S"],"i":["AY"],"you":["Y","UW"],"he":["HH","IY"],"she":["SH","IY"],"it":["IH","T"],"we":["W","IY"],"they":["DH","EY"],"me":["M","IY"],"him":["HH","IH","M"],"her":["HH","ER"],"us":["AH","S"],"them":["DH","EH","M"],"my":["M","AY"],"your":["Y","AO","R"],"his":["HH","IH","Z"],"hers":["HH","ER","Z"],"our":["AW","ER"],"their":["DH","EH","R"],"its":["IH","T","S"],"this":["DH","IH","S"],"that":["DH","AE","T"],"these":["DH","IY","Z"],"those":["DH","OW","Z"],"who":["HH","UW"],"whom":["HH","UW","M"],"whose":["HH","UW","Z"],"which":["W","IH","CH"],"what":["W","AH","T"],"when":["W","EH","N"],"where":["W","EH","R"],"why":["W","AY"],"how":["HH","AW"],"be":["B","IY"],"is":["IH","Z"],"are":["AA","R"],"am":["AE","M"],"was":["W","AO","Z"],"were":["W","ER"],"been":["B","IH","N"],"being":["B","IY","IH","NG"],"have":["HH","AE","V"],"has":["HH","AE","Z"],"had":["HH","AE","D"],"do":["D","UW"],"does":["D","AH","Z"],"did":["D","IH","D"],"doing":["D","UW","IH","NG"],"can":["K","AE","N"],"could":["K","UH","D"],"may":["M","EY"],"might":["M","AY","T"],"must":["M","AH","S","T"],"should":["SH","UH","D"],"would":["W","UH","D"],"will":["W","IH","L"],"shall":["SH","AE","L"],"go":["G","OW"],"come":["K","AH","M"],"get":["G","EH","T"],"make":["M","EY","K"],"take":["T","EY","K"],"put":["P","UH","T"],"see":["S","IY"],"know":["N","OW"],"think":["TH","IH","NG","K"],"give":["G","IH","V"],"find":["F","AY","N","D"],"tell":["T","EH","L"],"ask":["AE","S","K"],"work":["W","ER","K"],"call":["K","AO","L"],"try":["T","R","AY"],"feel":["F","IY","L"],"become":["B","IH","K","AH","M"],"leave":["L","IY","V"],"start":["S","T","AA","R","T"],"use":["Y","UW","Z"],"show":["SH","OW"],"help":["HH","EH","L","P"],"talk":["T","AO","K"],"turn":["T","ER","N"],"move":["M","UW","V"],"like":["L","AY","K"],"mean":["M","IY","N"],"keep":["K","IY","P"],"let":["L","EH","T"],"begin":["B","IH","G","IH","N"],"seem":["S","IY","M"],"hear":["HH","IY","R"],"hold":["HH","OW","L","D"],"write":["R","AY","T"],"provide":["P","R","AH","V","AY","D"],"say":["S","EY"],"spell":["S","P","EH","L"],"read":["R","EH","D"],"need":["N","IY","D"],"want":["W","AO","N","T"],"look":["L","UH","K"],"sound":["S","AW","N","D"],"run":["R","AH","N"],"walk":["W","AO","K"],"sit":["S","IH","T"],"stand":["S","T","AE","N","D"],"sleep":["S","L","IY","P"],"eat":["IY","T"],"drink":["D","R","IH","NG","K"],"buy":["B","AY"],"sell":["S","EH","L"],"pay":["P","EY"],"build":["B","IH","L","D"],"break":["B","R","EY","K"],"cut":["K","AH","T"],"close":["K","L","OW","Z"],"open":["OW","P","AH","N"],"live":["L","IH","V"],"die":["D","AY"],"grow":["G","R","OW"],"change":["CH","EY","N","JH"],"play":["P","L","EY"],"watch":["W","AO","CH"],"listen":["L","IH","S","AH","N"],"wait":["W","EY","T"],"follow":["F","AO","L","OW"],"lead":["L","EH","D"],"lose":["L","UW","Z"],"win":["W","IH","N"],"fight":["F","AY","T"],"pull":["P","UH","L"],"push":["P","UH","SH"],"touch":["T","AH","CH"],"carry":["K","AE","R","IY"],"bring":["B","R","IH","NG"],"send":["S","EH","N","D"],"pick":["P","IH","K"],"choose":["CH","UW","Z"],"learn":["L","ER","N"],"teach":["T","IY","CH"],"understand":["AH","N","D","ER","S","T","AE","N","D"],"remember":["R","IH","M","EH","M","B","ER"],"forget":["F","ER","G","EH","T"],"believe":["B","IH","L","IY","V"],"doubt":["D","AW","T"],"hope":["HH","OW","P"],"love":["L","AH","V"],"hate":["HH","EY","T"],"enjoy":["IH","N","JH","OY"],"suffer":["S","AH","F","ER"],"laugh":["L","AE","F"],"cry":["K","R","AY"],"smile":["S","M","AY","L"],"rain":["R","EY","N"],"snow":["S","N","OW"],"shine":["SH","AY","N"],"burn":["B","ER","N"],"freeze":["F","R","IY","Z"],"flow":["F","L","OW"],"swim":["S","W","IH","M"],"fly":["F","L","AY"],"made":["M","EY","D"],"fires":["F","AY","ER","Z"],"mount":["M","AW","N","T"],"doom":["D","UW","M"],"unmade":["AH","N","M","EY","D"],"ring":["R","IH","NG"],"lord":["L","AO","R","D"],"elf":["EH","L","F"],"dwarf":["D","W","AO","R","F"],"wizard":["W","IH","Z","ER","D"],"magic":["M","AE","JH","IH","K"],"dragon":["D","R","AE","G","AH","N"],"quest":["K","W","EH","S","T"],"hello":["HH","EH","L","OW"],"world":["W","ER","L","D"]};
+
+// ─── Rule-based G2P fallback ──────────────────────────────────────────────────
+function ruleBasedG2P(word) {
+    word = word.toLowerCase();
+    const phonemes = [];
+    let i = 0;
+    while (i < word.length) {
+        const c = word[i];
+        if (c === 'a') {
+            if (word[i+1]==='e'){phonemes.push('EY');i+=2;}
+            else if(word[i+1]==='i'){phonemes.push('AY');i+=2;}
+            else if(word[i+1]==='w'){phonemes.push('AW');i+=2;}
+            else if(i===word.length-1){phonemes.push('AE');i++;}
+            else{phonemes.push('AA');i++;}
+        } else if (c==='e'){
+            if(word[i+1]==='y'){phonemes.push('EY');i+=2;}
+            else{phonemes.push('EH');i++;}
+        } else if (c==='i'){
+            if(word[i+1]==='e'){phonemes.push('AY');i+=2;}
+            else{phonemes.push('IH');i++;}
+        } else if (c==='o'){
+            if(word[i+1]==='w'){phonemes.push('OW');i+=2;}
+            else{phonemes.push('AO');i++;}
+        } else if (c==='u'){
+            if(word[i+1]==='e'){phonemes.push('UW');i+=2;}
+            else{phonemes.push('UH');i++;}
+        } else if (c==='y'){phonemes.push('AY');i++;}
+        else if (c==='b'){phonemes.push('B');i++;}
+        else if (c==='c'){
+            if(word[i+1]==='h'){phonemes.push('CH');i+=2;}
+            else{phonemes.push('K');i++;}
+        } else if (c==='d'){phonemes.push('D');i++;}
+        else if (c==='f'){phonemes.push('F');i++;}
+        else if (c==='g'){
+            if(word[i+1]==='h'){phonemes.push('HH');i+=2;}
+            else{phonemes.push('G');i++;}
+        } else if (c==='h'){phonemes.push('HH');i++;}
+        else if (c==='j'){phonemes.push('JH');i++;}
+        else if (c==='k'){phonemes.push('K');i++;}
+        else if (c==='l'){phonemes.push('L');i++;}
+        else if (c==='m'){phonemes.push('M');i++;}
+        else if (c==='n'){
+            if(word[i+1]==='g'){phonemes.push('NG');i+=2;}
+            else{phonemes.push('N');i++;}
+        } else if (c==='p'){
+            if(word[i+1]==='h'){phonemes.push('F');i+=2;}
+            else{phonemes.push('P');i++;}
+        } else if (c==='r'){phonemes.push('R');i++;}
+        else if (c==='s'){
+            if(word[i+1]==='h'){phonemes.push('SH');i+=2;}
+            else{phonemes.push('S');i++;}
+        } else if (c==='t'){
+            if(word[i+1]==='h'){phonemes.push('TH');i+=2;}
+            else{phonemes.push('T');i++;}
+        } else if (c==='v'){phonemes.push('V');i++;}
+        else if (c==='w'){phonemes.push('W');i++;}
+        else if (c==='x'){phonemes.push('K');i++;}
+        else if (c==='z'){phonemes.push('Z');i++;}
+        else { i++; }
+    }
+    return phonemes;
+}
+
+function getPhonemes(word) {
+    return PHONEME_DICT[word.toLowerCase()] || ruleBasedG2P(word);
+}
+
+// ─── Audio synthesis (simulated vocoder preview) ──────────────────────────────
+function synthesizeAudio(nefsBytes) {
+    const sampleRate = 24000;
+    const hopLength = 256;
+    const melBins = 80;
+    const timeFrames = Math.max(16, nefsBytes.length * 6);
+    const totalSamples = timeFrames * hopLength;
+    const buf = new Float32Array(totalSamples);
+
+    // Map NEFS bytes to approximate formant frequencies
+    // Vowel bytes (0x49–0x8E range) have identifiable F1/F2 structure
+    function byteToFreq(b) {
+        // Row encodes manner, column encodes place
+        // Rough mapping: higher byte → higher frequency region
+        const normalized = b / 0xFF;
+        return 150 + normalized * 3500;
+    }
+
+    const freqs = nefsBytes.map(byteToFreq);
+    const energyEnvelope = (t) => Math.sin(Math.PI * t) * 0.85;
+
+    for (let frame = 0; frame < timeFrames; frame++) {
+        const t_norm = frame / timeFrames;
+        const byteIdx = Math.min(Math.floor(t_norm * nefsBytes.length), nefsBytes.length - 1);
+        const f0 = freqs[byteIdx] || 300;
+        const energy = energyEnvelope(t_norm);
+
+        for (let s = 0; s < hopLength; s++) {
+            const t = (frame * hopLength + s) / sampleRate;
+            let sample = 0;
+            // Fundamental + first 3 harmonics
+            for (let h = 1; h <= 4; h++) {
+                sample += (1 / h) * Math.sin(2 * Math.PI * f0 * h * t);
+            }
+            // Gentle formant shaping
+            sample *= energy * 0.12;
+            buf[frame * hopLength + s] = Math.tanh(sample);
+        }
+    }
+    return buf;
+}
+
+function playAudio(audioBuffer) {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ab = ctx.createBuffer(1, audioBuffer.length, 24000);
+    ab.getChannelData(0).set(audioBuffer);
+    const src = ctx.createBufferSource();
+    src.buffer = ab;
+    src.connect(ctx.destination);
+    src.start(0);
+}
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let entries = [];
+
+function processWord(word) {
+    word = word.trim();
+    if (!word) return;
+    const phonemes = getPhonemes(word);
+    const { bytes, errors } = cmuToNefs(phonemes);
+    const audioBuffer = synthesizeAudio(bytes);
+
+    // Simulate encoding latency (proportional to byte count, with noise)
+    const latency = Math.round(4 + bytes.length * 2.5 + Math.random() * 8);
+
+    entries.push({ word, phonemes, bytes, errors, audioBuffer, latency });
+    renderAll();
+    updatePipeline(word, phonemes, bytes);
+}
+
+function updatePipeline(word, phonemes, bytes) {
+    document.getElementById('ps-input-val').textContent = word;
+    document.getElementById('ps-cmu-val').textContent = phonemes.join(' ') || '—';
+    document.getElementById('ps-nefs-val').textContent =
+        bytes.map(b => b.toString(16).toUpperCase().padStart(2,'0')).join(' ') || '—';
+}
+
+function renderAll() {
+    document.getElementById('results').classList.add('show');
+
+    // Status
+    const totalErrors = entries.reduce((s, e) => s + e.errors, 0);
+    const totalPhonemes = entries.reduce((s, e) => s + e.phonemes.length, 0);
+    const statusDiv = document.getElementById('statusMsg');
+    if (totalErrors === 0) {
+        statusDiv.innerHTML = `<div class="msg ok">✓ All ${totalPhonemes} phonemes mapped to NEFS bytes without error.</div>`;
+    } else {
+        const rate = ((totalErrors / totalPhonemes) * 100).toFixed(1);
+        statusDiv.innerHTML = `<div class="msg warn">⚠ ${totalErrors} phoneme(s) (${rate}%) could not be mapped — likely OOV G2P output.</div>`;
+    }
+
+    // Word list
+    const list = document.getElementById('wordList');
+    list.innerHTML = entries.map((e, i) => {
+        const hexBytes = e.bytes.map(b => b.toString(16).toUpperCase().padStart(2,'0')).join(' ');
+        return `
+        <div class="word-row">
+            <div class="wr-word">${e.word}</div>
+            <div class="wr-cmu">${e.phonemes.join(' ')}</div>
+            <div class="wr-nefs">${hexBytes || '—'}</div>
+            <div class="wr-meta">
+                <span class="latency-badge">${e.latency}ms</span>
+                <button class="play-btn" onclick="playEntry(${i})">▶ play</button>
+            </div>
+        </div>`;
+    }).join('');
+
+    // Stats
+    const totalBytes = entries.reduce((s, e) => s + e.bytes.length, 0);
+    const errRate = totalPhonemes > 0 ? ((totalErrors / totalPhonemes) * 100).toFixed(1) + '%' : '0%';
+    document.getElementById('st-words').textContent = entries.length;
+    document.getElementById('st-phonemes').textContent = totalPhonemes;
+    document.getElementById('st-bytes').textContent = totalBytes;
+    document.getElementById('st-errors').textContent = errRate;
+}
+
+window.playEntry = function(i) {
+    playAudio(entries[i].audioBuffer);
+};
+
+function convertAll() {
+    const input = document.getElementById('textInput').value.trim();
+    if (!input) return;
+    const words = input.toLowerCase().match(/\b[a-z']+\b/g) || [];
+    entries = [];
+    for (const w of words) processWord(w);
+    document.getElementById('textInput').value = '';
+}
+
+document.getElementById('textInput').addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+        const val = document.getElementById('textInput').value.trim();
+        if (!val) return;
+        const words = val.split(/\s+/);
+        const last = words[words.length - 1];
+        if (last) {
+            e.preventDefault();
+            processWord(last);
+            document.getElementById('textInput').value = '';
+        }
+    }
+    if (e.code === 'Enter') {
+        e.preventDefault();
+        convertAll();
+    }
+});
+</script>
+</body>
+</html>
