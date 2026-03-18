@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Union, AsyncGenerator
 from dataclasses import dataclass
 from enum import Enum
 import time
+from nefs_g2p import text_to_ipa as _g2p_text_to_ipa
 
 class AudioFormat(Enum):
     MP3 = "audio/mpeg"
@@ -335,8 +336,7 @@ class NEFSTTSWrapper:
 
     def _text_to_ipa(self, text: str) -> str:
         """Convert regular text to IPA - integration point for G2P systems"""
-        return text  # Placeholder for actual G2P integration
-
+        return _g2p_text_to_ipa(text, lang='en-us', prefer='espeak')  # Use espeak as default for offline support
     def _generate_cache_key(self, request: NEFSSynthesisRequest) -> str:
         """Generate unique cache key for request"""
         key_data = {
