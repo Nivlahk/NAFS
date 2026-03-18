@@ -40,14 +40,14 @@ typedef struct { uint8_t nafs;    const char *ipa; } NAFSToIPA;
  * Notation used for ASCII-safe representations of combining sequences:
  *   bʰ / dʰ etc.  — aspirated stops   (U+02B0 MODIFIER LETTER SMALL H)
  *   b̚  / d̚  etc.  — unreleased stops  (U+031A COMBINING LEFT ANGLE ABOVE)
- *   ^w^            — labialization modifier
- *   ^j^            — palatalization modifier
- *   ^jj^           — strong palatalization
- *   ^jjj^          — extra-strong palatalization
- *   ^h^            — breathy voice (single)
- *   ^hh^           — breathy voice (double)
- *   ^ɣ^            — velarization modifier
- *   ^ˀ^            — glottalization modifier
+ *   ʷ  (U+02B7)    — labialization modifier
+ *   ʲ  (U+02B2)    — palatalization modifier
+ *   ʲʲ             — strong palatalization
+ *   ʲʲʲ            — extra-strong palatalization
+ *   hʰ (h+U+02B0)  — breathy voice (single)
+ *   hʰhʰ           — breathy voice (double)
+ *   ɣˤ (U+0263+U+02E4) — velarization modifier
+ *   ˀ  (U+02C0)    — glottalization modifier
  */
 static const IPAToNAFS ipa_to_nafs_table[] = {
     /* ── Multi-character sequences first (greedy matching requirement) ── */
@@ -96,14 +96,14 @@ static const IPAToNAFS ipa_to_nafs_table[] = {
     {"ˤˤ",    0xF8},   /* must precede bare ˤ */
 
     /* Modifier sequences */
-    {"^hh^",  0x2C},
-    {"^h^",   0x1C},
-    {"^w^",   0xF0},
-    {"^jjj^", 0xF4},
-    {"^jj^",  0xF5},
-    {"^j^",   0xF6},
-    {"^ɣ^",   0xF7},
-    {"^ˀ^",   0xFB},
+    {"hʰhʰ",  0x2C},
+    {"hʰ",          0x1C},
+    {"wʷ",          0xF0},
+    {"jʲjʲjʲ", 0xF4},
+    {"jʲjʲ",   0xF5},
+    {"jʲ",           0xF6},
+    {"ɣˤ",      0xF7},
+    {"ˀ",            0xFB},
 
     /* ── Prosody & suprasegmentals ──────────────────────────────────── */
     {".",     0x01},   /* syllable break         */

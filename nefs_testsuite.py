@@ -1,9 +1,9 @@
 
 """
-NAFS TTS Testing Suite
+NEFS TTS Testing Suite
 =====================
 
-Comprehensive testing framework for validating NAFS integration
+Comprehensive testing framework for validating NEFS integration
 with TTS systems, including performance benchmarks and quality assurance.
 """
 
@@ -28,13 +28,13 @@ class TestResult:
     error_message: str = ""
     metadata: Dict[str, Any] = None
 
-class NAFSPerformanceTester:
+class NEFSPerformanceTester:
     """
-    Performance testing suite for NAFS TTS integration
+    Performance testing suite for NEFS TTS integration
     """
 
-    def __init__(self, nafs_adapter, baseline_adapter=None):
-        self.nafs_adapter = nafs_adapter
+    def __init__(self, nefs_adapter, baseline_adapter=None):
+        self.nefs_adapter = nefs_adapter
         self.baseline_adapter = baseline_adapter
         self.test_results = []
 
@@ -42,7 +42,7 @@ class NAFSPerformanceTester:
         """
         Run complete test suite including performance, quality, and stress tests
         """
-        print("🧪 Starting NAFS TTS Comprehensive Test Suite...")
+        print("🧪 Starting NEFS TTS Comprehensive Test Suite...")
 
         # Test categories
         test_categories = [
@@ -79,8 +79,8 @@ class NAFSPerformanceTester:
         start_time = time.time()
 
         try:
-            request = NAFSSynthesisRequest(text=test_text)
-            response = await self.nafs_adapter.synthesize(request)
+            request = NEFSSynthesisRequest(text=test_text)
+            response = await self.nefs_adapter.synthesize(request)
 
             tests.append(TestResult(
                 test_name="basic_text_synthesis",
@@ -108,8 +108,8 @@ class NAFSPerformanceTester:
         start_time = time.time()
 
         try:
-            request = NAFSSynthesisRequest(text=ipa_text)
-            response = await self.nafs_adapter.synthesize(request)
+            request = NEFSSynthesisRequest(text=ipa_text)
+            response = await self.nefs_adapter.synthesize(request)
 
             tests.append(TestResult(
                 test_name="ipa_input_handling",
@@ -156,8 +156,8 @@ class NAFSPerformanceTester:
                 # NAFS test
                 start_time = time.time()
                 try:
-                    request = NAFSSynthesisRequest(text=test_text)
-                    response = await self.nafs_adapter.synthesize(request)
+                    request = NEFSSynthesisRequest(text=test_text)
+                    response = await self.nefs_adapter.synthesize(request)
                     nafs_times.append(time.time() - start_time)
 
                     # Store compression ratio
@@ -216,11 +216,11 @@ class NAFSPerformanceTester:
             start_time = time.time()
 
             try:
-                request = NAFSSynthesisRequest(text=text)
-                response = await self.nafs_adapter.synthesize(request)
+                request = NEFSSynthesisRequest(text=text)
+                response = await self.nefs_adapter.synthesize(request)
 
                 original_size = len(text.encode('utf-8'))
-                nafs_size = len(response.nafs_encoding_used)
+                nafs_size = len(response.nefs_encoding_used)
                 compression_ratio = original_size / nafs_size if nafs_size > 0 else 0
 
                 tests.append(TestResult(
@@ -268,11 +268,11 @@ class NAFSPerformanceTester:
             start_time = time.time()
 
             try:
-                request = NAFSSynthesisRequest(text=text, quality=NAFSQuality.PREMIUM)
-                response = await self.nafs_adapter.synthesize(request)
+                request = NEFSSynthesisRequest(text=text, quality=NEFSQuality.PREMIUM)
+                response = await self.nefs_adapter.synthesize(request)
 
                 # Simulate audio quality analysis
-                quality_score = self._analyze_audio_quality(text, response.nafs_encoding_used)
+                quality_score = self._analyze_audio_quality(text, response.nefs_encoding_used)
 
                 tests.append(TestResult(
                     test_name=f"quality_{test_type}",
@@ -309,11 +309,11 @@ class NAFSPerformanceTester:
         start_time = time.time()
         try:
             concurrent_requests = [
-                NAFSSynthesisRequest(text=f"Concurrent test request {i}")
+                NEFSSynthesisRequest(text=f"Concurrent test request {i}")
                 for i in range(50)
             ]
 
-            responses = await self.nafs_adapter.synthesize_batch(concurrent_requests)
+            responses = await self.nefs_adapter.synthesize_batch(concurrent_requests)
 
             success_rate = sum(1 for r in responses if r.audio_data) / len(responses)
             avg_processing_time = statistics.mean([r.processing_time for r in responses])
@@ -347,8 +347,8 @@ class NAFSPerformanceTester:
         start_time = time.time()
         try:
             large_text = self._generate_test_text(100000)  # 100K characters
-            request = NAFSSynthesisRequest(text=large_text)
-            response = await self.nafs_adapter.synthesize(request)
+            request = NEFSSynthesisRequest(text=large_text)
+            response = await self.nefs_adapter.synthesize(request)
 
             tests.append(TestResult(
                 test_name="memory_stress",
@@ -394,8 +394,8 @@ class NAFSPerformanceTester:
             start_time = time.time()
 
             try:
-                request = NAFSSynthesisRequest(text=text)
-                response = await self.nafs_adapter.synthesize(request)
+                request = NEFSSynthesisRequest(text=text)
+                response = await self.nefs_adapter.synthesize(request)
 
                 tests.append(TestResult(
                     test_name=f"edge_case_{case_name}",
@@ -444,10 +444,10 @@ class NAFSPerformanceTester:
 
             try:
                 # Create adapter for testing
-                test_adapter = create_nafs_adapter(adapter_type, 'test-key')
+                test_adapter = create_nefs_adapter(adapter_type, 'test-key')
 
                 # Test basic functionality
-                request = NAFSSynthesisRequest(
+                request = NEFSSynthesisRequest(
                     text="Integration compatibility test",
                     voice="test-voice"
                 )
@@ -504,7 +504,7 @@ class NAFSPerformanceTester:
         # In real implementation, would use psutil or similar
         return random.uniform(50, 200)  # Simulated MB usage
 
-    def _analyze_audio_quality(self, original_text: str, nafs_encoding: bytes) -> float:
+    def _analyze_audio_quality(self, original_text: str, nefs_encoding: bytes) -> float:
         """Simulate audio quality analysis"""
         # In real implementation, would perform spectral analysis, phoneme accuracy, etc.
         base_quality = 0.95
@@ -586,11 +586,11 @@ class NAFSPerformanceTester:
         quality_score = report['performance']['average_quality_score']
 
         if success_rate >= 0.95 and performance_improvement >= 1.8 and quality_score >= 0.94:
-            return "✅ RECOMMENDED FOR PRODUCTION: NAFS integration shows excellent performance improvements with high reliability and quality scores. Deploy with confidence."
+            return "✅ RECOMMENDED FOR PRODUCTION: NEFS integration shows excellent performance improvements with high reliability and quality scores. Deploy with confidence."
         elif success_rate >= 0.90 and performance_improvement >= 1.5 and quality_score >= 0.90:
-            return "⚠️ RECOMMENDED WITH MONITORING: NAFS integration shows good improvements. Deploy to staging first and monitor performance closely."
+            return "⚠️ RECOMMENDED WITH MONITORING: NEFS integration shows good improvements. Deploy to staging first and monitor performance closely."
         elif success_rate >= 0.80:
-            return "🔄 REQUIRES OPTIMIZATION: NAFS integration needs further tuning. Review failed tests and optimize before production deployment."
+            return "🔄 REQUIRES OPTIMIZATION: NEFS integration needs further tuning. Review failed tests and optimize before production deployment."
         else:
             return "❌ NOT RECOMMENDED: Significant issues detected. Review and resolve failed tests before considering deployment."
 
@@ -616,21 +616,21 @@ class NAFSPerformanceTester:
         print(f"📊 Test results exported to {filename}")
 
 # Example usage and main test runner
-async def run_nafs_test_suite():
+async def run_nefs_test_suite():
     """Main test runner function"""
 
     # Initialize NAFS adapter (using mock for demonstration)
-    nafs_adapter = create_nafs_adapter('default', 'test-api-key')
+    nefs_adapter = create_nefs_adapter('default', 'test-api-key')
 
     # Create tester
-    tester = NAFSPerformanceTester(nafs_adapter)
+    tester = NEFSPerformanceTester(nefs_adapter)
 
     # Run comprehensive test suite
     results = await tester.run_comprehensive_test_suite()
 
     # Display results
     print("\n" + "="*80)
-    print("🎯 NAFS TTS INTEGRATION TEST RESULTS")
+    print("🎯 NEFS TTS INTEGRATION TEST RESULTS")
     print("="*80)
 
     report = results['report']
@@ -644,9 +644,9 @@ async def run_nafs_test_suite():
     print(results['recommendation'])
 
     # Export detailed results
-    tester.export_results_csv(results['test_results'], 'nafs_test_results.csv')
+    tester.export_results_csv(results['test_results'], 'nefs_test_results.csv')
 
     return results
 
 if __name__ == "__main__":
-    asyncio.run(run_nafs_test_suite())
+    asyncio.run(run_nefs_test_suite())

@@ -428,14 +428,14 @@
             <strong>Audio synthesis:</strong> The ▶ buttons play a tone-mapped audio preview generated from
             the NEFS byte sequence via a simulated mel-spectrogram → HiFiGAN-style vocoder.
             This is a stand-in for a real G2P → NEFS → TTS pipeline; full neural synthesis
-            integration is in progress (see <code>NAFSTTSWrapper</code> in the Python library).
+            integration is in progress (see <code>NEFSTTSWrapper</code> in the Python library).
         </div>
     </div>
 
 </div>
 
 <script>
-// ─── NEFS byte grid (mirrors NAFSConverter._create_mappings in Python) ────────
+// ─── NEFS byte grid (mirrors NEFSConverter._create_mappings in Python) ────────
 // Keys are CMU Arpabet phonemes → NEFS hex byte(s)
 // Vowel mappings: CMU → nearest IPA → NEFS byte
 // Consonant mappings: CMU → NEFS byte
@@ -479,6 +479,9 @@ const CMU_TO_NEFS = {
     'OY': [0x6E],   // ɔ + j (nucleus = ɔ)
 };
 
+// Word boundary: 0x0F = silence/space marker (NEFS spec §6)
+const NEFS_WORD_BOUNDARY = 0x0F;
+
 // Stress digits in CMU (AH0, AH1, AH2) — strip stress marker before lookup
 function stripStress(phoneme) {
     return phoneme.replace(/[012]$/, '');
@@ -487,6 +490,7 @@ function stripStress(phoneme) {
 function cmuToNefs(phonemes) {
     const bytes = [];
     let errors = 0;
+    // Note: insert NEFS_WORD_BOUNDARY (0x0F) between words at the call site
     for (const raw of phonemes) {
         const p = stripStress(raw);
         if (CMU_TO_NEFS[p]) {
