@@ -111,20 +111,23 @@ class DirectG2PNEFS(nn.Module):
         char_emb = self.char_embedding(text_bytes)
         enc_out, _ = self.encoder(char_emb)
         
-        # Decode to NEFS sequence (autoregressive for now, can be made parallel)
+        # Decode to NEFS sequence (autoregressive).
+        # Each step we pass only the most recent embedding as input rather than
+        # the full accumulated sequence — avoids O(n²) memory from torch.cat.
         batch_size = text_bytes.size(0)
-        decoder_input = enc_out[:, 0:1, :]  # Start token (use first encoded char)
-        
+        # Use the first encoded character as the start token.
+        decoder_input = enc_out[:, 0:1, :]  # (batch, 1, hidden*2)
+        hidden = None  # LSTM state carried across steps
+
         outputs = []
         for t in range(max_nefs_len):
-            dec_out, _ = self.decoder(decoder_input)
-            logits = self.output_proj(dec_out[:, -1:, :])  # (batch, 1, 256)
+            dec_out, hidden = self.decoder(decoder_input, hidden)
+            logits = self.output_proj(dec_out)  # (batch, 1, 256)
             outputs.append(logits)
-            
-            # Greedy decoding for next step
+
+            # Next input: embed the argmax prediction for this step
             next_token = logits.argmax(dim=-1)  # (batch, 1)
-            next_emb = self.char_embedding(next_token)  # Reuse embedding
-            decoder_input = torch.cat([decoder_input, next_emb], dim=1)
+            decoder_input = self.char_embedding(next_token)  # (batch, 1, hidden)
         
         return torch.cat(outputs, dim=1)  # (batch, nefs_len, 256)
     
@@ -139,8 +142,13 @@ class DirectG2PNEFS(nn.Module):
         Returns:
             (nefs_len,) tensor of NEFS byte values
         """
-        # Convert text to byte values
-        text_bytes = torch.tensor([ord(c) for c in text], dtype=torch.long).unsqueeze(0)
+        # Encode text as UTF-8 bytes so non-ASCII characters (accented letters,
+        # CJK, Arabic, etc.) are represented correctly.  Using ord(c) only works
+        # for ASCII — it returns the Unicode code point, which can exceed 255 and
+        # will silently wrap or error when cast to a byte tensor.
+        text_bytes = torch.tensor(
+            list(text.encode("utf-8")), dtype=torch.long
+        ).unsqueeze(0)
         
         # Forward pass
         logits = self.forward(text_bytes, max_nefs_len=len(text) * 3)  # Allow expansion
@@ -216,11 +224,19 @@ class LJSpeechNEFSDataset(Dataset):
                 nefs_bytes = torch.tensor(list(nefs_bytes_obj), dtype=torch.long)
             except Exception as e:
                 logger.warning(f"G2P failed for '{transcript}': {e}. Using fallback.")
-                # Fallback: encode text as ASCII (placeholder)
-                nefs_bytes = torch.tensor([ord(c) % 256 for c in transcript], dtype=torch.long)
+                # Fallback: encode transcript as UTF-8 bytes.
+                # ord(c) % 256 was used previously but is wrong for non-ASCII —
+                # Unicode code points do not equal UTF-8 byte values above 0x7F.
+                nefs_bytes = torch.tensor(
+                    list(transcript.encode('utf-8')), dtype=torch.long
+                )
         else:
-            # Direct character encoding (for learned G2P path)
-            nefs_bytes = torch.tensor([ord(c) for c in transcript], dtype=torch.long)
+            # Direct character encoding (for learned G2P path).
+            # Use UTF-8 byte encoding — ord(c) returns Unicode code points which
+            # exceed 255 for non-ASCII characters and would index out of range.
+            nefs_bytes = torch.tensor(
+                list(transcript.encode('utf-8')), dtype=torch.long
+            )
         
         return {
             'waveform': waveform,
@@ -232,26 +248,40 @@ class LJSpeechNEFSDataset(Dataset):
 def collate_fn(batch: List[Dict]) -> Dict:
     """
     Pad variable-length sequences to batch together.
+
+    Returns padding masks alongside padded tensors so the model and loss
+    can ignore pad positions.  A mask value of True means "real data";
+    False means "padding" — consistent with PyTorch's key_padding_mask
+    convention used by nn.MultiheadAttention and similar modules.
     """
     waveforms = [item['waveform'] for item in batch]
     nefs_seqs = [item['nefs_bytes'] for item in batch]
     transcripts = [item['transcript'] for item in batch]
-    
-    # Pad waveforms
+
+    # Pad waveforms and build a sample-level mask
     max_wav_len = max(w.size(0) for w in waveforms)
     waveforms_padded = torch.stack([
         F.pad(w, (0, max_wav_len - w.size(0))) for w in waveforms
     ])
-    
-    # Pad NEFS sequences
+    wav_lengths = torch.tensor([w.size(0) for w in waveforms], dtype=torch.long)
+    # (batch, max_wav_len) — True where real audio, False where padding
+    wav_mask = torch.arange(max_wav_len).unsqueeze(0) < wav_lengths.unsqueeze(1)
+
+    # Pad NEFS sequences and build a token-level mask
     max_nefs_len = max(n.size(0) for n in nefs_seqs)
     nefs_padded = torch.stack([
         F.pad(n, (0, max_nefs_len - n.size(0))) for n in nefs_seqs
     ])
-    
+    nefs_lengths = torch.tensor([n.size(0) for n in nefs_seqs], dtype=torch.long)
+    # (batch, max_nefs_len) — True where real phoneme, False where padding
+    nefs_mask = torch.arange(max_nefs_len).unsqueeze(0) < nefs_lengths.unsqueeze(1)
+
     return {
         'waveform': waveforms_padded,
+        'wav_mask': wav_mask,
         'nefs_bytes': nefs_padded,
+        'nefs_mask': nefs_mask,
+        'nefs_lengths': nefs_lengths,
         'transcript': transcripts,
     }
 
@@ -303,6 +333,11 @@ def train_nefs_tts(
     
     # Scheduler
     total_steps = len(dataloader) * epochs
+    if total_steps == 0:
+        raise ValueError(
+            f"Dataset at '{data_dir}' produced 0 valid samples. "
+            "Check that metadata.csv exists and wav paths are correct."
+        )
     scheduler = OneCycleLR(
         optimizer, max_lr=lr,
         total_steps=total_steps,
@@ -312,7 +347,10 @@ def train_nefs_tts(
     # Resume
     start_epoch = 0
     if resume_from and resume_from.exists():
-        checkpoint = torch.load(resume_from)
+        # map_location ensures a GPU checkpoint loads cleanly on a CPU-only machine.
+        # weights_only=True (PyTorch ≥ 2.0) prevents arbitrary code execution from
+        # untrusted checkpoint files and suppresses the FutureWarning in 2.x.
+        checkpoint = torch.load(resume_from, map_location=device, weights_only=True)
         phoneme_encoder.load_state_dict(checkpoint['phoneme_encoder'])
         prosody_predictor.load_state_dict(checkpoint['prosody_predictor'])
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -330,19 +368,35 @@ def train_nefs_tts(
         for batch_idx, batch in enumerate(pbar):
             waveforms = batch['waveform'].to(device)
             nefs_bytes = batch['nefs_bytes'].to(device)
-            
+            nefs_mask = batch['nefs_mask'].to(device)   # (batch, seq_len) bool
+
             # Forward pass
             phoneme_emb = phoneme_encoder(nefs_bytes)
             frame_emb, pred_durations, pred_f0 = prosody_predictor(phoneme_emb)
-            
-            # Loss: For now, simple reconstruction loss on embeddings
-            # In full training, would include:
-            #   - Duration MSE loss (if ground-truth alignments available)
-            #   - F0 MSE loss
-            #   - Audio reconstruction loss via HiFi-GAN discriminator
-            
-            # Placeholder: just ensure forward pass works
-            loss = frame_emb.pow(2).mean() * 0.01  # Regularization
+
+            # Loss: masked embedding regularisation + waveform reconstruction proxy.
+            # Future work could add:
+            #   - Duration MSE: F.mse_loss(pred_durations[nefs_mask], target_dur[nefs_mask])
+            #   - F0 MSE on voiced frames
+            #   - Full HiFi-GAN discriminator losses
+            # Mask embedding values at pad positions before computing the loss so
+            # the model is not penalised for (or influenced by) pad representations.
+            masked_emb = frame_emb * nefs_mask.unsqueeze(-1).float()
+            # Normalise by the number of real tokens to keep loss scale stable
+            # across batches with different amounts of padding.
+            real_tokens = nefs_mask.sum().clamp(min=1)
+            emb_loss = masked_emb.pow(2).sum() / real_tokens * 0.01
+
+            # Waveform reconstruction proxy: project frame embeddings to the time
+            # domain and compare against the ground-truth waveform energy.
+            # frame_emb shape: (batch, seq_len, hidden) — average across the
+            # sequence to get a per-batch energy estimate, then align to the
+            # waveform RMS so the model is rewarded for matching signal loudness.
+            pred_energy = masked_emb.pow(2).mean(dim=[1, 2])          # (batch,)
+            wav_rms = waveforms.pow(2).mean(dim=-1).clamp(min=1e-8)   # (batch,)
+            wav_loss = F.mse_loss(pred_energy, wav_rms)
+
+            loss = emb_loss + wav_loss
             
             # Backward
             optimizer.zero_grad()
@@ -406,7 +460,7 @@ def main():
         
         # Load model
         device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
-        checkpoint = torch.load(args.checkpoint, map_location=device)
+        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=True)
         
         phoneme_encoder = NEFSPhonemeEncoder(embedding_dim=512).to(device)
         prosody_predictor = NEFSProsodyPredictor(input_dim=512).to(device)

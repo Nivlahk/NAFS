@@ -6,6 +6,7 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Union, AsyncGenerator
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 import time
@@ -32,8 +33,7 @@ class NEFSSynthesisRequest:
     quality: NEFSQuality = NEFSQuality.STANDARD
     speed: float = 1.0
     pitch: float = 1.0
-    ssml_support: bool = True
-    is_ssml: bool = False  # New field to indicate SSML content
+    is_ssml: bool = False  # Set automatically by synthesize() on SSML detection
 
 @dataclass
 class NEFSSynthesisResponse:
@@ -44,427 +44,11 @@ class NEFSSynthesisResponse:
     nefs_encoding_used: bytes
     processing_time: float
 
-class SSMLNEFSProcessor:
-    """Handles SSML parsing and NEFS phoneme tag processing"""
 
-    def __init__(self, nefs_converter):
-        self.nefs_converter = nefs_converter
-        self.ssml_namespace = {'ssml': 'http://www.w3.org/2001/10/synthesis'}
-
-    def process_ssml_with_nefs(self, ssml_text: str) -> Dict:
-        """
-        Process SSML text and convert NEFS phoneme tags to target format
-        Returns processed SSML and metadata about NEFS conversions
-        """
-        # Parse SSML
-        try:
-            # Wrap in speak tag if not present
-            if not ssml_text.strip().startswith('<speak'):
-                ssml_text = f'<speak xmlns="http://www.w3.org/2001/10/synthesis">{ssml_text}</speak>'
-
-            root = ET.fromstring(ssml_text)
-            nefs_conversions = []
-
-            # Process all phoneme tags
-            for phoneme_elem in root.iter():
-                if phoneme_elem.tag.endswith('phoneme'):
-                    alphabet = phoneme_elem.get('alphabet', '').lower()
-                    ph_value = phoneme_elem.get('ph', '')
-
-                    if alphabet == 'nefs':
-                        # Convert NEFS to IPA for compatibility
-                        try:
-                            # Decode NEFS bytes from hex string
-                            nefs_bytes = bytes.fromhex(ph_value)
-                            ipa_text = self.nefs_converter.nafs_to_ipa(nefs_bytes)
-
-                            # Update the phoneme tag to use IPA
-                            phoneme_elem.set('alphabet', 'ipa')
-                            phoneme_elem.set('ph', ipa_text)
-
-                            nefs_conversions.append({
-                                'original_nefs': ph_value,
-                                'converted_ipa': ipa_text,
-                                'text': phoneme_elem.text or ''
-                            })
-                        except Exception as e:
-                            logging.warning(f"Failed to convert NEFS phoneme {ph_value}: {e}")
-
-            # Convert back to string
-            processed_ssml = ET.tostring(root, encoding='unicode')
-
-            return {
-                'processed_ssml': processed_ssml,
-                'nefs_conversions': nefs_conversions,
-                'conversion_count': len(nefs_conversions)
-            }
-
-        except ET.ParseError as e:
-            logging.error(f"SSML parsing error: {e}")
-            return {
-                'processed_ssml': ssml_text,
-                'nefs_conversions': [],
-                'conversion_count': 0,
-                'error': str(e)
-            }
-
-    def create_nefs_ssml_example(self, text: str, nefs_phonemes: List[str]) -> str:
-        """Create example SSML with NEFS phoneme tags"""
-        words = text.split()
-        ssml_parts = ['<speak xmlns="http://www.w3.org/2001/10/synthesis">']
-
-        for i, word in enumerate(words):
-            if i < len(nefs_phonemes):
-                # Add NEFS phoneme tag
-                nefs_hex = nefs_phonemes[i]
-                ssml_parts.append(f'<phoneme alphabet="nefs" ph="{nefs_hex}">{word}</phoneme>')
-            else:
-                ssml_parts.append(word)
-
-            if i < len(words) - 1:
-                ssml_parts.append(' ')
-
-        ssml_parts.append('</speak>')
-        return ''.join(ssml_parts)
-
-class NEFSTTSWrapper:
-    """
-    Production-ready NEFS TTS API wrapper with full SSML support
-    """
-
-    def __init__(self,
-                 api_key: str,
-                 base_url: str = "https://api.nefs-tts.com/v1",
-                 cache_enabled: bool = True,
-                 cache_size: int = 1000):
-        self.api_key = api_key
-        self.base_url = base_url
-        self.cache_enabled = cache_enabled
-        self.cache = {} if cache_enabled else None
-        self.cache_size = cache_size
-        self.nefs_converter = NEFSConverter()
-        self.ssml_processor = SSMLNEFSProcessor(self.nefs_converter)
-        self.stats = {
-            'requests_processed': 0,
-            'cache_hits': 0,
-            'total_processing_time': 0,
-            'average_compression_ratio': 0,
-            'ssml_requests': 0,
-            'nefs_phoneme_conversions': 0
-        }
-
-    async def synthesize(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
-        """
-        Main synthesis method with automatic NEFS optimization and SSML support
-        """
-        start_time = time.time()
-
-        # Detect if input is SSML
-        if self._is_ssml_content(request.text):
-            request.is_ssml = True
-            self.stats['ssml_requests'] += 1
-
-            # Process SSML with NEFS phoneme tags
-            ssml_result = self.ssml_processor.process_ssml_with_nefs(request.text)
-            request.text = ssml_result['processed_ssml']
-            self.stats['nefs_phoneme_conversions'] += ssml_result['conversion_count']
-
-        # Auto-detect and convert input format if not SSML
-        if request.nefs_encoding is None and not request.is_ssml:
-            request.nefs_encoding = self._optimize_input(request.text)
-
-        # Check cache first
-        cache_key = self._generate_cache_key(request)
-        if self.cache_enabled and cache_key in self.cache:
-            self.stats['cache_hits'] += 1
-            return self.cache[cache_key]
-
-        # Process synthesis request
-        response = await self._process_synthesis(request)
-
-        # Update cache
-        if self.cache_enabled:
-            self._update_cache(cache_key, response)
-
-        # Update statistics
-        processing_time = time.time() - start_time
-        self.stats['requests_processed'] += 1
-        self.stats['total_processing_time'] += processing_time
-
-        return response
-
-    def _is_ssml_content(self, text: str) -> bool:
-        """Detect if text contains SSML markup"""
-        ssml_patterns = [
-            r'<speak[^>]*>',
-            r'<phoneme[^>]*>',
-            r'<break[^>]*>',
-            r'<emphasis[^>]*>',
-            r'<prosody[^>]*>',
-            r'<voice[^>]*>'
-        ]
-        return any(re.search(pattern, text, re.IGNORECASE) for pattern in ssml_patterns)
-
-    def create_nefs_ssml(self, text: str, phonetic_mappings: Dict[str, str] = None) -> str:
-        """
-        Create SSML with NEFS phoneme tags
-
-        Args:
-            text: Regular text to convert
-            phonetic_mappings: Optional dict mapping words to NEFS hex encodings
-
-        Returns:
-            SSML string with NEFS phoneme tags
-        """
-        if not phonetic_mappings:
-            # Auto-generate NEFS encodings
-            words = text.split()
-            phonetic_mappings = {}
-            for word in words:
-                ipa_text = self._text_to_ipa(word)
-                nefs_bytes = self.nefs_converter.ipa_to_nafs(ipa_text)
-                phonetic_mappings[word] = nefs_bytes.hex()
-
-        # Build SSML
-        ssml_parts = ['<speak xmlns="http://www.w3.org/2001/10/synthesis">']
-        words = text.split()
-
-        for i, word in enumerate(words):
-            if word.lower() in phonetic_mappings:
-                nefs_hex = phonetic_mappings[word.lower()]
-                ssml_parts.append(f'<phoneme alphabet="nefs" ph="{nefs_hex}">{word}</phoneme>')
-            else:
-                ssml_parts.append(word)
-
-            if i < len(words) - 1:
-                ssml_parts.append(' ')
-
-        ssml_parts.append('</speak>')
-        return ''.join(ssml_parts)
-
-    def validate_nefs_ssml(self, ssml_text: str) -> Dict:
-        """
-        Validate SSML with NEFS phoneme tags
-
-        Returns:
-            Dictionary with validation results and any issues found
-        """
-        validation_result = {
-            'is_valid': True,
-            'errors': [],
-            'warnings': [],
-            'nefs_tags_found': 0,
-            'nefs_tags_validated': 0
-        }
-
-        try:
-            # Parse SSML
-            if not ssml_text.strip().startswith('<speak'):
-                ssml_text = f'<speak xmlns="http://www.w3.org/2001/10/synthesis">{ssml_text}</speak>'
-
-            root = ET.fromstring(ssml_text)
-
-            # Validate NEFS phoneme tags
-            for phoneme_elem in root.iter():
-                if phoneme_elem.tag.endswith('phoneme'):
-                    alphabet = phoneme_elem.get('alphabet', '').lower()
-                    ph_value = phoneme_elem.get('ph', '')
-
-                    if alphabet == 'nefs':
-                        validation_result['nefs_tags_found'] += 1
-
-                        # Validate NEFS encoding
-                        try:
-                            nefs_bytes = bytes.fromhex(ph_value)
-                            # Attempt conversion to verify validity
-                            self.nefs_converter.nafs_to_ipa(nefs_bytes)
-                            validation_result['nefs_tags_validated'] += 1
-                        except ValueError:
-                            validation_result['errors'].append(f"Invalid NEFS hex encoding: {ph_value}")
-                            validation_result['is_valid'] = False
-                        except Exception as e:
-                            validation_result['errors'].append(f"NEFS conversion error for {ph_value}: {str(e)}")
-                            validation_result['is_valid'] = False
-
-        except ET.ParseError as e:
-            validation_result['is_valid'] = False
-            validation_result['errors'].append(f"SSML parsing error: {str(e)}")
-
-        return validation_result
-
-    # [Rest of the existing methods remain the same...]
-    async def synthesize_batch(self, requests: List[NEFSSynthesisRequest]) -> List[NEFSSynthesisResponse]:
-        """Batch processing with parallel execution"""
-        tasks = [self.synthesize(req) for req in requests]
-        return await asyncio.gather(*tasks)
-
-    async def stream_synthesis(self, request: NEFSSynthesisRequest) -> AsyncGenerator[bytes, None]:
-        """Streaming synthesis for real-time applications"""
-        if request.is_ssml:
-            # For SSML, process as single unit
-            response = await self.synthesize(request)
-            yield response.audio_data
-        else:
-            # Convert text to NEFS encoding in chunks
-            nefs_chunks = self._chunk_nefs_encoding(request.text)
-
-            for chunk in nefs_chunks:
-                chunk_request = NEFSSynthesisRequest(
-                    text="",
-                    nefs_encoding=chunk,
-                    voice=request.voice,
-                    language=request.language,
-                    format=request.format,
-                    quality=request.quality
-                )
-
-                response = await self.synthesize(chunk_request)
-                yield response.audio_data
-
-    def _optimize_input(self, text: str) -> bytes:
-        """Automatically optimize text input using NEFS encoding"""
-        if self._is_ipa_text(text):
-            return self.nefs_converter.ipa_to_nafs(text)
-        else:
-            ipa_text = self._text_to_ipa(text)
-            return self.nefs_converter.ipa_to_nafs(ipa_text)
-
-    def _is_ipa_text(self, text: str) -> bool:
-        """Heuristic to detect IPA notation in input text"""
-        ipa_chars = set('ɑɒɔəɛɪʊʌæɜɝɞɘɵɤɯɨʉɘɚɝɞɘɵɤɯɨʉieyøoeɛaɶɒɑɔʌʊɪəɚɝɞɘɵɤɯɨʉ')
-        return len(set(text) & ipa_chars) > len(text) * 0.1
-
-    def _text_to_ipa(self, text: str) -> str:
-        """Convert regular text to IPA - integration point for G2P systems"""
-        return _g2p_text_to_ipa(text, lang='en-us', prefer='espeak')  # Use espeak as default for offline support
-    def _generate_cache_key(self, request: NEFSSynthesisRequest) -> str:
-        """Generate unique cache key for request.
-
-        Uses MD5 purely as a fast, non-cryptographic hash for dictionary
-        keying.  ``usedforsecurity=False`` (Python 3.9+) suppresses the
-        ValueError raised on FIPS-enforced systems when MD5 is requested
-        for a security context.  We fall back to SHA-256 on older runtimes
-        where the keyword argument is not accepted.
-        """
-        key_data = {
-            'text': request.text if request.is_ssml else '',
-            'nefs_encoding': request.nefs_encoding.hex() if request.nefs_encoding else '',
-            'voice': request.voice,
-            'language': request.language,
-            'format': request.format.value,
-            'quality': request.quality.value,
-            'speed': request.speed,
-            'pitch': request.pitch,
-            'is_ssml': request.is_ssml
-        }
-        payload = json.dumps(key_data, sort_keys=True).encode()
-        try:
-            return hashlib.md5(payload, usedforsecurity=False).hexdigest()
-        except TypeError:
-            # Python < 3.9 does not accept usedforsecurity kwarg
-            return hashlib.md5(payload).hexdigest()
-
-    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
-        """Core synthesis processing - integrates with TTS engine"""
-        compression_ratio = 2.0
-        if request.text and not request.is_ssml:
-            compression_ratio = len(request.text.encode()) / len(request.nefs_encoding)
-
-        await asyncio.sleep(0.1)  # Simulated processing delay
-
-        return NEFSSynthesisResponse(
-            audio_data=b"simulated_audio_data",
-            format=request.format,
-            duration=len(request.text) * 0.1 if request.text else 1.0,
-            metadata={
-                'compression_ratio': compression_ratio,
-                'nefs_size': len(request.nefs_encoding) if request.nefs_encoding else 0,
-                'original_size': len(request.text.encode()) if request.text else 0,
-                'is_ssml': request.is_ssml
-            },
-            nefs_encoding_used=request.nefs_encoding or b'',
-            processing_time=0.1
-        )
-
-    def _chunk_nefs_encoding(self, text: str, chunk_size: int = 100) -> List[bytes]:
-        """Split text into chunks for streaming synthesis"""
-        chunks = []
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i:i+chunk_size]
-            chunks.append(self._optimize_input(chunk))
-        return chunks
-
-    def _update_cache(self, key: str, response: NEFSSynthesisResponse):
-        """Update cache with LRU eviction"""
-        if len(self.cache) >= self.cache_size:
-            oldest_key = next(iter(self.cache))
-            del self.cache[oldest_key]
-        self.cache[key] = response
-
-    def get_statistics(self) -> Dict:
-        """Get performance statistics"""
-        avg_time = (self.stats['total_processing_time'] /
-                   max(self.stats['requests_processed'], 1))
-        return {
-            **self.stats,
-            'average_processing_time': avg_time,
-            'cache_hit_rate': (self.stats['cache_hits'] /
-                              max(self.stats['requests_processed'], 1)) * 100
-        }
-
-# Enhanced provider adapters with full SSML support
-
-class PollyNEFSAdapter(NEFSTTSWrapper):
-    """Amazon Polly integration adapter with NEFS SSML support"""
-
-    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
-        if request.is_ssml:
-            # SSML is already processed - NEFS tags converted to IPA
-            ssml_text = request.text
-        else:
-            # Convert NEFS back to IPA for Polly processing
-            ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
-            ssml_text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
-
-        # Process with Polly using processed SSML
-        return await super()._process_synthesis(request)
-
-class AzureNEFSAdapter(NEFSTTSWrapper):
-    """Microsoft Azure TTS integration adapter with NEFS SSML support"""
-
-    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
-        if request.is_ssml:
-            # Use processed SSML directly
-            ssml_text = request.text
-        else:
-            # Convert NEFS to Azure-compatible format
-            ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
-            ssml_text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
-
-        return await super()._process_synthesis(request)
-
-class GoogleNEFSAdapter(NEFSTTSWrapper):
-    """Google Cloud TTS integration adapter with NEFS SSML support"""
-
-    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
-        if request.is_ssml:
-            # Google TTS with processed SSML
-            ssml_text = request.text
-        else:
-            # Google TTS integration with NEFS optimization
-            ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
-            ssml_text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
-
-        return await super()._process_synthesis(request)
-
-
-# True NEFSConverter implementation from trueconv.py
-import warnings
-from typing import Dict, List, Union
-
+# ─── Core encoding converter ──────────────────────────────────────────────
 class NEFSConverter:
     def __init__(self):
-        self.ipa_to_nafs_dict, self.nafs_to_ipa_dict, self.affricate_dict = self._create_mappings()
+        self.ipa_to_nefs_dict, self.nefs_to_ipa_dict, self.affricate_dict = self._create_mappings()
         self.nefs_to_affricate_dict = {}
         for ipa, nefs_sequence in self.affricate_dict.items():
             key = tuple(nefs_sequence)
@@ -563,11 +147,15 @@ class NEFSConverter:
         i = 0
         while i < len(ipa_string):
             matched = False
-            for length in [3, 2]:
+            # Greedy longest-match: try 6 codepoints down to 2.
+            # The table contains sequences up to 6 codepoints long
+            # (e.g. jʲjʲjʲ = j + ʲ + j + ʲ + j + ʲ).  Scanning only [3,2]
+            # as before silently dropped those matches.
+            for length in [6, 5, 4, 3, 2]:
                 if i + length <= len(ipa_string):
                     substring = ipa_string[i:i+length]
-                    if substring in self.ipa_to_nafs_dict:
-                        nefs_code = self.ipa_to_nafs_dict[substring]
+                    if substring in self.ipa_to_nefs_dict:
+                        nefs_code = self.ipa_to_nefs_dict[substring]
                         if isinstance(nefs_code, list):
                             result.extend(nefs_code)
                         else:
@@ -577,8 +165,8 @@ class NEFSConverter:
                         break
             if not matched:
                 char = ipa_string[i]
-                if char in self.ipa_to_nafs_dict:
-                    nefs_code = self.ipa_to_nafs_dict[char]
+                if char in self.ipa_to_nefs_dict:
+                    nefs_code = self.ipa_to_nefs_dict[char]
                     if isinstance(nefs_code, list):
                         result.extend(nefs_code)
                     else:
@@ -600,8 +188,8 @@ class NEFSConverter:
                     i += 2
                     continue
             byte_val = nefs_bytes[i]
-            if byte_val in self.nafs_to_ipa_dict:
-                result.append(self.nafs_to_ipa_dict[byte_val])
+            if byte_val in self.nefs_to_ipa_dict:
+                result.append(self.nefs_to_ipa_dict[byte_val])
                 i += 1
             else:
                 warnings.warn(f"Unmappable NEFS byte 0x{byte_val:02X} at position {i}")
@@ -613,10 +201,15 @@ class NEFSConverter:
             nefs_bytes = self.ipa_to_nafs(ipa_string)
             reconstructed = self.nafs_to_ipa(nefs_bytes)
             return ipa_string == reconstructed
-        except:
+        except Exception:
             return False
     
     def batch_convert(self, strings: List[str], direction: str = 'ipa_to_nafs') -> List[str]:
+        valid_directions = ('ipa_to_nafs', 'nafs_to_ipa')
+        if direction not in valid_directions:
+            raise ValueError(
+                f"direction must be one of {valid_directions}, got {direction!r}"
+            )
         results = []
         for s in strings:
             if direction == 'ipa_to_nafs':
@@ -624,7 +217,13 @@ class NEFSConverter:
                 results.append(result.hex(' '))
             elif direction == 'nafs_to_ipa':
                 if isinstance(s, str):
-                    bytes_input = bytes.fromhex(s.replace(' ', ''))
+                    try:
+                        bytes_input = bytes.fromhex(s.replace(' ', ''))
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"batch_convert: invalid hex string at index {len(results)}: "
+                            f"{s!r} — {exc}"
+                        ) from exc
                 else:
                     bytes_input = s
                 result = self.nafs_to_ipa(bytes_input)
@@ -633,11 +232,494 @@ class NEFSConverter:
     
     def get_stats(self) -> Dict[str, Union[int, float]]:
         return {
-            'total_ipa_mappings': len(self.ipa_to_nafs_dict),
-            'total_nafs_mappings': len(self.nafs_to_ipa_dict),
+            'total_ipa_mappings': len(self.ipa_to_nefs_dict),
+            'total_nefs_mappings': len(self.nefs_to_ipa_dict),
             'affricate_mappings': len(self.affricate_dict),
-            'hex_coverage_percent': len(self.nafs_to_ipa_dict) / 256 * 100
+            'hex_coverage_percent': len(self.nefs_to_ipa_dict) / 256 * 100
         }
+
+
+class SSMLNEFSProcessor:
+    """Handles SSML parsing and NEFS phoneme tag processing"""
+
+    # SSML namespace URI — used when constructing speak wrappers and when
+    # ET.tostring needs to serialise namespace-qualified tags correctly.
+    SSML_NS = 'http://www.w3.org/2001/10/synthesis'
+
+    def __init__(self, nefs_converter):
+        self.nefs_converter = nefs_converter
+
+    def process_ssml_with_nefs(self, ssml_text: str) -> Dict:
+        """
+        Process SSML text and convert NEFS phoneme tags to target format
+        Returns processed SSML and metadata about NEFS conversions
+        """
+        # Parse SSML
+        try:
+            # Wrap in speak tag if not present
+            if not ssml_text.strip().startswith('<speak'):
+                ssml_text = f'<speak xmlns="{SSMLNEFSProcessor.SSML_NS}">{ssml_text}</speak>'
+
+            root = ET.fromstring(ssml_text)
+            nefs_conversions = []
+
+            # Process all phoneme tags
+            for phoneme_elem in root.iter():
+                if phoneme_elem.tag.endswith('phoneme'):
+                    alphabet = phoneme_elem.get('alphabet', '').lower()
+                    ph_value = phoneme_elem.get('ph', '')
+
+                    if alphabet == 'nefs':
+                        # Convert NEFS to IPA for compatibility
+                        try:
+                            # Decode NEFS bytes from hex string
+                            nefs_bytes = bytes.fromhex(ph_value)
+                            ipa_text = self.nefs_converter.nafs_to_ipa(nefs_bytes)
+
+                            # Update the phoneme tag to use IPA
+                            phoneme_elem.set('alphabet', 'ipa')
+                            phoneme_elem.set('ph', ipa_text)
+
+                            nefs_conversions.append({
+                                'original_nefs': ph_value,
+                                'converted_ipa': ipa_text,
+                                'text': phoneme_elem.text or ''
+                            })
+                        except Exception as e:
+                            logging.warning(f"Failed to convert NEFS phoneme {ph_value}: {e}")
+
+            # Convert back to string
+            processed_ssml = ET.tostring(root, encoding='unicode')
+
+            return {
+                'processed_ssml': processed_ssml,
+                'nefs_conversions': nefs_conversions,
+                'conversion_count': len(nefs_conversions)
+            }
+
+        except ET.ParseError as e:
+            logging.error(f"SSML parsing error: {e}")
+            return {
+                'processed_ssml': ssml_text,
+                'nefs_conversions': [],
+                'conversion_count': 0,
+                'error': str(e)
+            }
+
+    def create_nefs_ssml_example(self, text: str, nefs_phonemes: List[str]) -> str:
+        """Create example SSML with NEFS phoneme tags"""
+        words = text.split()
+        ssml_parts = [f'<speak xmlns="{SSMLNEFSProcessor.SSML_NS}">']
+
+        for i, word in enumerate(words):
+            if i < len(nefs_phonemes):
+                # Add NEFS phoneme tag
+                nefs_hex = nefs_phonemes[i]
+                ssml_parts.append(f'<phoneme alphabet="nefs" ph="{nefs_hex}">{word}</phoneme>')
+            else:
+                ssml_parts.append(word)
+
+            if i < len(words) - 1:
+                ssml_parts.append(' ')
+
+        ssml_parts.append('</speak>')
+        return ''.join(ssml_parts)
+
+class NEFSTTSWrapper:
+    """
+    Production-ready NEFS TTS API wrapper with full SSML support
+    """
+
+    def __init__(self,
+                 api_key: str,
+                 base_url: str = "https://api.nefs-tts.com/v1",
+                 cache_enabled: bool = True,
+                 cache_size: int = 1000):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.cache_enabled = cache_enabled
+        self.cache = {} if cache_enabled else None
+        self.cache_size = cache_size
+        self.nefs_converter = NEFSConverter()
+        self.ssml_processor = SSMLNEFSProcessor(self.nefs_converter)
+        self.stats = {
+            'requests_processed': 0,
+            'cache_hits': 0,
+            'total_processing_time': 0,
+            'average_compression_ratio': 0,
+            'ssml_requests': 0,
+            'nefs_phoneme_conversions': 0
+        }
+
+    async def synthesize(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
+        """
+        Main synthesis method with automatic NEFS optimization and SSML support
+        """
+        # Work on a shallow copy so we never mutate the caller's object.
+        # The original code modified request.text, request.is_ssml, and
+        # request.nefs_encoding in-place, silently corrupting any request
+        # object that was reused across calls.
+        import dataclasses
+        request = dataclasses.replace(request)
+        start_time = time.time()
+
+        # Detect if input is SSML
+        if self._is_ssml_content(request.text):
+            request.is_ssml = True
+            self.stats['ssml_requests'] += 1
+
+            # Process SSML with NEFS phoneme tags
+            ssml_result = self.ssml_processor.process_ssml_with_nefs(request.text)
+            request.text = ssml_result['processed_ssml']
+            self.stats['nefs_phoneme_conversions'] += ssml_result['conversion_count']
+
+        # Auto-detect and convert input format if not SSML
+        if request.nefs_encoding is None and not request.is_ssml:
+            request.nefs_encoding = self._optimize_input(request.text)
+
+        # Check cache first
+        cache_key = self._generate_cache_key(request)
+        if self.cache_enabled and cache_key in self.cache:
+            self.stats['cache_hits'] += 1
+            return self.cache[cache_key]
+
+        # Process synthesis request
+        response = await self._process_synthesis(request)
+
+        # Update cache
+        if self.cache_enabled:
+            self._update_cache(cache_key, response)
+
+        # Update statistics
+        processing_time = time.time() - start_time
+        n = self.stats['requests_processed']
+        self.stats['requests_processed'] += 1
+        self.stats['total_processing_time'] += processing_time
+        # Update running average compression ratio
+        cr = response.metadata.get('compression_ratio', 1.0)
+        self.stats['average_compression_ratio'] = (
+            (self.stats['average_compression_ratio'] * n + cr) / (n + 1)
+        )
+
+        return response
+
+    def _is_ssml_content(self, text: str) -> bool:
+        """Detect if text contains SSML markup"""
+        ssml_patterns = [
+            r'<speak[^>]*>',
+            r'<phoneme[^>]*>',
+            r'<break[^>]*>',
+            r'<emphasis[^>]*>',
+            r'<prosody[^>]*>',
+            r'<voice[^>]*>'
+        ]
+        return any(re.search(pattern, text, re.IGNORECASE) for pattern in ssml_patterns)
+
+    def create_nefs_ssml(self, text: str, phonetic_mappings: Optional[Dict[str, str]] = None) -> str:
+        """
+        Create SSML with NEFS phoneme tags
+
+        Args:
+            text: Regular text to convert
+            phonetic_mappings: Optional dict mapping words to NEFS hex encodings.
+                               Pass None (default) to auto-generate encodings.
+                               Passing an empty dict {} will produce plain SSML
+                               with no phoneme tags — use None to auto-generate.
+
+        Returns:
+            SSML string with NEFS phoneme tags
+        """
+        if phonetic_mappings is None:
+            # Auto-generate NEFS encodings
+            words = text.split()
+            phonetic_mappings = {}
+            for word in words:
+                ipa_text = self._text_to_ipa(word)
+                nefs_bytes = self.nefs_converter.ipa_to_nafs(ipa_text)
+                phonetic_mappings[word] = nefs_bytes.hex()
+
+        # Build SSML
+        ssml_parts = [f'<speak xmlns="{SSMLNEFSProcessor.SSML_NS}">']
+        words = text.split()
+
+        for i, word in enumerate(words):
+            if word.lower() in phonetic_mappings:
+                nefs_hex = phonetic_mappings[word.lower()]
+                ssml_parts.append(f'<phoneme alphabet="nefs" ph="{nefs_hex}">{word}</phoneme>')
+            else:
+                ssml_parts.append(word)
+
+            if i < len(words) - 1:
+                ssml_parts.append(' ')
+
+        ssml_parts.append('</speak>')
+        return ''.join(ssml_parts)
+
+    def validate_nefs_ssml(self, ssml_text: str) -> Dict:
+        """
+        Validate SSML with NEFS phoneme tags
+
+        Returns:
+            Dictionary with validation results and any issues found
+        """
+        validation_result = {
+            'is_valid': True,
+            'errors': [],
+            'warnings': [],
+            'nefs_tags_found': 0,
+            'nefs_tags_validated': 0
+        }
+
+        try:
+            # Parse SSML
+            if not ssml_text.strip().startswith('<speak'):
+                ssml_text = f'<speak xmlns="{SSMLNEFSProcessor.SSML_NS}">{ssml_text}</speak>'
+
+            root = ET.fromstring(ssml_text)
+
+            # Validate NEFS phoneme tags
+            for phoneme_elem in root.iter():
+                if phoneme_elem.tag.endswith('phoneme'):
+                    alphabet = phoneme_elem.get('alphabet', '').lower()
+                    ph_value = phoneme_elem.get('ph', '')
+
+                    if alphabet == 'nefs':
+                        validation_result['nefs_tags_found'] += 1
+
+                        # Validate NEFS encoding
+                        try:
+                            nefs_bytes = bytes.fromhex(ph_value)
+                            # Attempt conversion to verify validity
+                            self.nefs_converter.nafs_to_ipa(nefs_bytes)
+                            validation_result['nefs_tags_validated'] += 1
+                        except ValueError:
+                            validation_result['errors'].append(f"Invalid NEFS hex encoding: {ph_value}")
+                            validation_result['is_valid'] = False
+                        except Exception as e:
+                            validation_result['errors'].append(f"NEFS conversion error for {ph_value}: {str(e)}")
+                            validation_result['is_valid'] = False
+
+        except ET.ParseError as e:
+            validation_result['is_valid'] = False
+            validation_result['errors'].append(f"SSML parsing error: {str(e)}")
+
+        return validation_result
+
+    async def synthesize_batch(self, requests: List[NEFSSynthesisRequest]) -> List[NEFSSynthesisResponse]:
+        """Batch processing with parallel execution"""
+        tasks = [self.synthesize(req) for req in requests]
+        return await asyncio.gather(*tasks)
+
+    async def stream_synthesis(self, request: NEFSSynthesisRequest) -> AsyncGenerator[bytes, None]:
+        """Streaming synthesis for real-time applications"""
+        if request.is_ssml:
+            # For SSML, process as single unit
+            response = await self.synthesize(request)
+            yield response.audio_data
+        else:
+            # Convert text to NEFS encoding in chunks
+            nefs_chunks = self._chunk_nefs_encoding(request.text)
+
+            for chunk in nefs_chunks:
+                chunk_request = NEFSSynthesisRequest(
+                    text="",  # chunk is pre-encoded; duration derived from nefs_encoding length
+                    nefs_encoding=chunk,
+                    voice=request.voice,
+                    language=request.language,
+                    format=request.format,
+                    quality=request.quality,
+                    is_ssml=False,
+                )
+
+                response = await self.synthesize(chunk_request)
+                yield response.audio_data
+
+    def _optimize_input(self, text: str) -> bytes:
+        """Automatically optimize text input using NEFS encoding"""
+        if self._is_ipa_text(text):
+            return self.nefs_converter.ipa_to_nafs(text)
+        else:
+            ipa_text = self._text_to_ipa(text)
+            return self.nefs_converter.ipa_to_nafs(ipa_text)
+
+    def _is_ipa_text(self, text: str) -> bool:
+        """Heuristic to detect IPA notation in input text.
+
+        Tests whether a meaningful fraction of characters are unambiguously
+        IPA-specific — i.e. symbols not found in standard Latin orthography.
+        Common Latin letters shared with IPA (p b t d k g m n s z f v l r w j h)
+        are excluded to avoid false positives on plain English.
+        The threshold is 5% of total characters (not unique chars, which gave
+        wrong answers for long strings with repeated IPA symbols).
+        """
+        ipa_specific = set(
+            # IPA vowels not in Latin orthography
+            'ɑɒɔəɛɪʊʌæɜɝɞɘɵɤɯɨʉɚɐɶœøɵʏ'
+            # IPA consonants not in standard Latin
+            'βðʒʃŋɳɲɴʔʕħʁɣχɸθɹɻɾʀɽʙɬɮʎʟʍɥʋɰʄɓɗɠʛɧʘǀǁǃǂ'
+            # Modifier / suprasegmental letters
+            'ʼʰʷʲˤˠˁ'
+            # Tone letters
+            '˥˦˧˨˩'
+        )
+        if not text:
+            return False
+        ipa_count = sum(1 for c in text if c in ipa_specific)
+        return ipa_count / len(text) > 0.05
+
+    def _text_to_ipa(self, text: str) -> str:
+        """Convert regular text to IPA - integration point for G2P systems"""
+        return _g2p_text_to_ipa(text, lang='en-us', prefer='espeak')  # Use espeak as default for offline support
+    def _generate_cache_key(self, request: NEFSSynthesisRequest) -> str:
+        """Generate unique cache key for request.
+
+        Uses MD5 purely as a fast, non-cryptographic hash for dictionary
+        keying.  ``usedforsecurity=False`` (Python 3.9+) suppresses the
+        ValueError raised on FIPS-enforced systems when MD5 is requested
+        for a security context.  We fall back to SHA-256 on older runtimes
+        where the keyword argument is not accepted.
+        """
+        key_data = {
+            # Always include text in the key.  The original code used '' for
+            # non-SSML requests, so two requests with identical NEFS encodings
+            # but different source text would collide in the cache.
+            'text': request.text,
+            'nefs_encoding': request.nefs_encoding.hex() if request.nefs_encoding else '',
+            'voice': request.voice,
+            'language': request.language,
+            'format': request.format.value,
+            'quality': request.quality.value,
+            'speed': request.speed,
+            'pitch': request.pitch,
+            'is_ssml': request.is_ssml
+        }
+        payload = json.dumps(key_data, sort_keys=True).encode()
+        try:
+            return hashlib.md5(payload, usedforsecurity=False).hexdigest()
+        except TypeError:
+            # Python < 3.9 does not accept usedforsecurity kwarg
+            return hashlib.md5(payload).hexdigest()
+
+    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
+        """Core synthesis processing - integrates with TTS engine"""
+        compression_ratio = 2.0
+        if request.text and not request.is_ssml and request.nefs_encoding:
+            nefs_len = len(request.nefs_encoding)
+            compression_ratio = len(request.text.encode()) / nefs_len if nefs_len > 0 else 1.0
+
+        await asyncio.sleep(0.1)  # Simulated processing delay
+
+        return NEFSSynthesisResponse(
+            audio_data=b"simulated_audio_data",
+            format=request.format,
+            # When text is empty (e.g. streaming chunks that are NEFS-only),
+            # estimate duration from the NEFS byte count instead of returning 0.
+            duration=(
+                len(request.text) * 0.1
+                if request.text
+                else len(request.nefs_encoding) * 0.05 if request.nefs_encoding
+                else 1.0
+            ),
+            metadata={
+                'compression_ratio': compression_ratio,
+                'nefs_size': len(request.nefs_encoding) if request.nefs_encoding else 0,
+                'original_size': len(request.text.encode()) if request.text else 0,
+                'is_ssml': request.is_ssml
+            },
+            nefs_encoding_used=request.nefs_encoding or b'',
+            processing_time=0.1
+        )
+
+    def _chunk_nefs_encoding(self, text: str, chunk_size: int = 100) -> List[bytes]:
+        """Split text into word-boundary chunks and encode each to NEFS.
+
+        The original implementation sliced text by raw character offset which
+        split mid-word, producing garbled G2P input (e.g. "hel" + "lo" instead
+        of "hello").  This version splits on whitespace so each chunk contains
+        only whole words, then re-joins chunks that are under chunk_size chars.
+        """
+        words = text.split()
+        chunks: List[bytes] = []
+        current_words: List[str] = []
+        current_len = 0
+
+        for word in words:
+            # +1 for the space that would precede the word (except first)
+            word_len = len(word) + (1 if current_words else 0)
+            if current_words and current_len + word_len > chunk_size:
+                chunks.append(self._optimize_input(' '.join(current_words)))
+                current_words = [word]
+                current_len = len(word)
+            else:
+                current_words.append(word)
+                current_len += word_len
+
+        if current_words:
+            chunks.append(self._optimize_input(' '.join(current_words)))
+
+        return chunks
+
+    def _update_cache(self, key: str, response: NEFSSynthesisResponse):
+        """Update cache with LRU eviction. No-op when cache is None (cache_enabled=False)."""
+        if self.cache is None:
+            return
+        if len(self.cache) >= self.cache_size:
+            oldest_key = next(iter(self.cache))
+            del self.cache[oldest_key]
+        self.cache[key] = response
+
+    def get_statistics(self) -> Dict:
+        """Get performance statistics"""
+        avg_time = (self.stats['total_processing_time'] /
+                   max(self.stats['requests_processed'], 1))
+        return {
+            **self.stats,
+            'average_processing_time': avg_time,
+            'cache_hit_rate': (self.stats['cache_hits'] /
+                              max(self.stats['requests_processed'], 1)) * 100
+        }
+
+# Enhanced provider adapters with full SSML support
+
+class PollyNEFSAdapter(NEFSTTSWrapper):
+    """Amazon Polly integration adapter with NEFS SSML support"""
+
+    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
+        # SSML phoneme tags have already been converted from NEFS to IPA by
+        # SSMLNEFSProcessor before this point, so request.text is ready to
+        # pass to Polly's SynthesizeSpeech API with TextType='ssml'.
+        # For non-SSML requests the NEFS encoding is converted back to IPA
+        # and wrapped in an SSML phoneme tag so Polly pronounces it correctly.
+        # Real Polly API call goes here (boto3.client('polly').synthesize_speech).
+        if not request.is_ssml and request.nefs_encoding:
+            ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
+            request.text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
+            request.is_ssml = True
+        return await super()._process_synthesis(request)
+
+class AzureNEFSAdapter(NEFSTTSWrapper):
+    """Microsoft Azure TTS integration adapter with NEFS SSML support"""
+
+    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
+        # Same pattern as Polly: SSML is already clean, plain text gets wrapped.
+        # Real Azure call goes here (azure.cognitiveservices.speech SDK).
+        if not request.is_ssml and request.nefs_encoding:
+            ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
+            request.text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
+            request.is_ssml = True
+        return await super()._process_synthesis(request)
+
+class GoogleNEFSAdapter(NEFSTTSWrapper):
+    """Google Cloud TTS integration adapter with NEFS SSML support"""
+
+    async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
+        # Real Google call goes here (google.cloud.texttospeech SDK).
+        if not request.is_ssml and request.nefs_encoding:
+            ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
+            request.text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
+            request.is_ssml = True
+        return await super()._process_synthesis(request)
+
 
 # Utility functions
 def create_nefs_adapter(provider: str, api_key: str) -> NEFSTTSWrapper:

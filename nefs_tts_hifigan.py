@@ -34,7 +34,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import warnings
 from pathlib import Path
 from typing import Optional, Union
 
@@ -94,10 +93,14 @@ class NEFSPhonemeEncoder(nn.Module):
         
         # Full byte embedding (256 possible bytes)
         self.byte_embed = nn.Embedding(256, embedding_dim)
-        
-        # Combination layer
-        self.combine = nn.Linear(embedding_dim * 2 if use_feature_decomposition else embedding_dim, 
-                                  embedding_dim)
+
+        # Combination layer — only reached when use_feature_decomposition=True.
+        # Input is cat([feature_emb, byte_emb]) = embedding_dim + embedding_dim.
+        # When decomp=False the forward() takes an early return before combine,
+        # so the Linear is always constructed with the correct input size here
+        # regardless of the flag — the conditional in the original code was both
+        # wrong (embedding_dim*2 vs embedding_dim) and dead (False branch unused).
+        self.combine = nn.Linear(embedding_dim * 2, embedding_dim)
         
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(embedding_dim)
@@ -214,29 +217,41 @@ class NEFSProsodyPredictor(nn.Module):
     def _length_regulator(self, x: torch.Tensor, durations: torch.Tensor) -> torch.Tensor:
         """
         Repeat each phoneme embedding according to its duration.
-        
+
         Args:
             x: (batch, seq_len, dim)
-            durations: (batch, seq_len) integer frame counts
-        
+            durations: (batch, seq_len) frame counts (float or int tensor)
+
         Returns:
-            (batch, sum(durations), dim)
+            (batch, max_total_frames, dim) — padded to the longest sequence in
+            the batch.
+
+        Implementation note
+        -------------------
+        The original implementation used nested Python loops
+        (O(batch × seq_len) calls to .item() + .repeat()), which serialises
+        execution on the CPU and prevents GPU parallelism.
+
+        This version uses ``torch.repeat_interleave`` which is a single fused
+        CUDA/CPU kernel call per batch item, giving O(1) kernel launches instead
+        of O(batch × seq_len).  Padding is still done with F.pad per item since
+        torch.nn.utils.rnn.pad_sequence expects a list of variable-length tensors.
         """
-        batch_size, seq_len, dim = x.shape
+        # Round durations to integers; clamp to at least 1 to avoid empty slices.
+        dur_int = durations.round().long().clamp(min=1)  # (batch, seq_len)
+
         output = []
-        
-        for b in range(batch_size):
-            expanded = []
-            for i in range(seq_len):
-                repeat_count = int(durations[b, i].item())
-                expanded.append(x[b, i:i+1].repeat(repeat_count, 1))
-            output.append(torch.cat(expanded, dim=0))
-        
-        # Pad to max length in batch
+        for b in range(x.size(0)):
+            # repeat_interleave repeats x[b] along dim=0 according to dur_int[b].
+            # This is a single vectorised kernel call — no Python loop over seq_len.
+            repeated = torch.repeat_interleave(x[b], dur_int[b], dim=0)  # (total_frames, dim)
+            output.append(repeated)
+
+        # Pad to the longest sequence in the batch.
         max_len = max(o.size(0) for o in output)
         padded = [F.pad(o, (0, 0, 0, max_len - o.size(0))) for o in output]
-        
-        return torch.stack(padded)
+
+        return torch.stack(padded)  # (batch, max_len, dim)
 
 
 # ============================================================================
@@ -246,25 +261,41 @@ class NEFSProsodyPredictor(nn.Module):
 class NEFSHiFiGANSynthesizer(nn.Module):
     """
     Complete NEFS-native TTS system with HiFi-GAN vocoder.
-    
+
     Pipeline:
         1. Text → nefs_g2p.text_to_ipa() → NEFSConverter.ipa_to_nafs() → NEFS bytes
-        2. NEFS bytes → NEFSPhonemeEncoder → embeddings
-        3. Embeddings → NEFSProsodyPredictor → frame-rate features
-        4. Features → HiFi-GAN generator → audio waveform
+        2. NEFS bytes → NEFSPhonemeEncoder → embeddings (dim=embedding_dim)
+        3. Embeddings → NEFSProsodyPredictor → frame-rate features (dim=embedding_dim)
+        4. Frame features → mel_proj → mel-scale features (dim=n_mels)
+        5. Mel features → HiFi-GAN generator → audio waveform
+
+    The mel projection (step 4) is critical: HiFi-GAN's generator was trained
+    to condition on 80-bin mel spectrograms.  The phoneme encoder output has
+    dimension 512 (or whatever embedding_dim is set to).  Without a learned
+    linear projection from 512 → 80, passing raw frame embeddings to the
+    vocoder produces garbage audio.
     """
-    
+
     def __init__(
         self,
         phoneme_encoder: NEFSPhonemeEncoder,
         prosody_predictor: NEFSProsodyPredictor,
         hifigan_generator: Optional[nn.Module] = None,
+        n_mels: int = 80,
     ):
         super().__init__()
         self.phoneme_encoder = phoneme_encoder
         self.prosody_predictor = prosody_predictor
         self.hifigan_generator = hifigan_generator
-        
+        self.n_mels = n_mels
+
+        # Project from phoneme embedding space → mel-spectrogram channel count.
+        # HiFi-GAN generators expect input shape (batch, n_mels, frames).
+        # This layer is always constructed so checkpoints are consistent; it
+        # is a no-op during training stages that don't attach a vocoder.
+        embedding_dim = phoneme_encoder.embedding_dim
+        self.mel_proj = nn.Linear(embedding_dim, n_mels)
+
         # Lazy imports for NEFS converter and G2P
         self.nefs_converter = None
         self.g2p = None
@@ -337,9 +368,12 @@ class NEFSHiFiGANSynthesizer(nn.Module):
         # Generate audio via HiFi-GAN (if available)
         audio = None
         if self.hifigan_generator is not None:
-            # Transpose to (batch, dim, frames) for HiFi-GAN input
-            frame_features = frame_emb.transpose(1, 2)
-            audio = self.hifigan_generator(frame_features)
+            # Project from embedding_dim → n_mels so the vocoder receives the
+            # mel-spectrogram-shaped input it was trained on.
+            # frame_emb: (batch, frames, embedding_dim)
+            # mel:       (batch, frames, n_mels) → transposed to (batch, n_mels, frames)
+            mel = self.mel_proj(frame_emb).transpose(1, 2)
+            audio = self.hifigan_generator(mel)
             audio = audio.squeeze(1)  # Remove channel dim if present
         
         return {
@@ -491,6 +525,7 @@ class NEFSHiFiGANSynthesizer(nn.Module):
             phoneme_encoder=phoneme_encoder,
             prosody_predictor=prosody_predictor,
             hifigan_generator=hifigan_generator,
+            n_mels=80,  # Standard HiFi-GAN LJSpeech config
         )
         
         synthesizer.to(device)

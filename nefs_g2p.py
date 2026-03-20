@@ -22,14 +22,14 @@ Install dependencies (all optional — only the tiers you install will be used):
 espeak-ng binary (Tier 2) must also be on PATH:
     Windows:  https://github.com/espeak-ng/espeak-ng/releases
     Linux:    sudo apt install espeak-ng
-    macOS:    brew install espeak
+    macOS:    brew install espeak-ng
 """
 
 from __future__ import annotations
 
 import logging
 import warnings
-from typing import Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +112,18 @@ def _g2p_charsiu(text: str, lang: str = "en-us") -> Optional[str]:
 
         # CharsiuG2P expects the language tag prepended
         prompt = f"{lang}: {text}"
+        # Do NOT pass padding=True for a single string.  ByT5 has no dedicated
+        # pad token and falls back to using eos_token as pad, which corrupts the
+        # attention mask and degrades output quality.  Padding is only needed
+        # when batching multiple sequences together.
         inputs = _charsiu_tokenizer(
             prompt,
             return_tensors="pt",
-            padding=True,
         )
+        # Move inputs to the same device as the model to avoid device mismatch
+        # errors when the model has been loaded onto CUDA.
+        model_device = next(_charsiu_model.parameters()).device
+        inputs = {k: v.to(model_device) for k, v in inputs.items()}
         with torch.no_grad():
             # Use max_new_tokens (preferred over max_length in transformers ≥4.20).
             # early_stopping=True without explicit beam constraints was deprecated
@@ -218,7 +225,7 @@ def _g2p_espeak(text: str, lang: str = "en-us") -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 # Map common BCP-47 codes -> epitran lang-script codes where they differ
-_EPITRAN_LANG_MAP: dict[str, str] = {
+_EPITRAN_LANG_MAP: Dict[str, str] = {
     "en": "eng-Latn",
     "en-us": "eng-Latn",
     "en-gb": "eng-Latn",
@@ -340,10 +347,16 @@ def text_to_ipa(
             logger.debug(f"G2P backend used: {backend_name}")
             return result
         if not fallback:
-            raise RuntimeError(
-                f"G2P backend '{backend_name}' is not available.  "
-                "Install the required package(s) listed in nefs_g2p.py."
-            )
+            # Only the preferred backend was attempted when fallback=False;
+            # raising on any backend in the list would give a misleading error
+            # message if a non-preferred backend returned None first.
+            if backend_name == prefer:
+                raise RuntimeError(
+                    f"G2P backend '{prefer}' is not available or failed. "
+                    "Install the required package(s) listed in nefs_g2p.py."
+                )
+            # Non-preferred backends should not be reached when fallback=False.
+            break
 
     # All backends failed — return text unchanged so downstream code doesn't break
     warnings.warn(
@@ -356,7 +369,7 @@ def text_to_ipa(
     return text
 
 
-def available_backends() -> dict[str, bool]:
+def available_backends() -> Dict[str, bool]:
     """
     Return a dict showing which G2P backends are currently importable.
 
@@ -365,7 +378,7 @@ def available_backends() -> dict[str, bool]:
     dict
         e.g. {'charsiu': True, 'espeak': False, 'epitran': True}
     """
-    result: dict[str, bool] = {}
+    result: Dict[str, bool] = {}
 
     # charsiu
     try:
@@ -375,10 +388,12 @@ def available_backends() -> dict[str, bool]:
     except ImportError:
         result["charsiu"] = False
 
-    # espeak
+    # espeak — requires both the phonemizer package AND the binary on PATH
     try:
         import phonemizer  # noqa: F401  # type: ignore
-        result["espeak"] = True
+        # Package present — also verify the binary is reachable, otherwise
+        # phonemizer will import fine but fail at runtime.
+        result["espeak"] = _check_espeak_binary()
     except ImportError:
         result["espeak"] = False
 
