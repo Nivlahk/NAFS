@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import subprocess
+import sys
 import threading
 import queue
 import time
@@ -35,6 +37,30 @@ from typing import Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# eSpeak-ng binary path — resolves automatically on all platforms
+# ---------------------------------------------------------------------------
+
+def _find_espeak_binary() -> str:
+    """
+    Return the espeak-ng executable path.
+
+    On Windows the installer puts the binary in Program Files but does not
+    reliably add it to PATH, so we check the two standard install locations
+    before falling back to a bare 'espeak-ng' (which works if PATH is set).
+    """
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\Program Files\eSpeak NG\espeak-ng.exe",
+            r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
+        ]
+        for path in candidates:
+            if os.path.isfile(path):
+                return path
+    return "espeak-ng"  # rely on PATH on Linux/macOS
+
+ESPEAK_BIN = _find_espeak_binary()
 
 # ---------------------------------------------------------------------------
 # Optional imports — degrade gracefully so the module always loads
@@ -70,7 +96,7 @@ def _espeak_available() -> bool:
     """Return True if the espeak-ng binary is reachable on PATH."""
     try:
         result = subprocess.run(
-            ["espeak-ng", "--version"],
+            [ESPEAK_BIN, "--version"],
             capture_output=True, timeout=3
         )
         return result.returncode == 0
@@ -109,11 +135,10 @@ def _synth_ipa_to_pcm(
     ipa_input = f"[[{ipa}]]"
 
     cmd = [
-        "espeak-ng",
+        ESPEAK_BIN,
         "-v", lang,
         "-s", str(speed),
         "-p", str(pitch),
-        "--ipa=0",          # don't print IPA to stdout
         "--stdout",         # write WAV to stdout
         ipa_input,
     ]
@@ -379,8 +404,6 @@ class NEFSRealTimeSynth:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import sys
-
     logging.basicConfig(level=logging.INFO)
 
     print("NEFS eSpeak-ng Real-Time Synthesis — smoke test")
