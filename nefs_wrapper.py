@@ -45,16 +45,16 @@ class NEFSSynthesisResponse:
     processing_time: float
 
 class SSMLNEFSProcessor:
-    """Handles SSML parsing and NAFS phoneme tag processing"""
+    """Handles SSML parsing and NEFS phoneme tag processing"""
 
     def __init__(self, nefs_converter):
         self.nefs_converter = nefs_converter
         self.ssml_namespace = {'ssml': 'http://www.w3.org/2001/10/synthesis'}
 
-    def process_ssml_with_nafs(self, ssml_text: str) -> Dict:
+    def process_ssml_with_nefs(self, ssml_text: str) -> Dict:
         """
-        Process SSML text and convert NAFS phoneme tags to target format
-        Returns processed SSML and metadata about NAFS conversions
+        Process SSML text and convert NEFS phoneme tags to target format
+        Returns processed SSML and metadata about NEFS conversions
         """
         # Parse SSML
         try:
@@ -63,7 +63,7 @@ class SSMLNEFSProcessor:
                 ssml_text = f'<speak xmlns="http://www.w3.org/2001/10/synthesis">{ssml_text}</speak>'
 
             root = ET.fromstring(ssml_text)
-            nafs_conversions = []
+            nefs_conversions = []
 
             # Process all phoneme tags
             for phoneme_elem in root.iter():
@@ -71,10 +71,10 @@ class SSMLNEFSProcessor:
                     alphabet = phoneme_elem.get('alphabet', '').lower()
                     ph_value = phoneme_elem.get('ph', '')
 
-                    if alphabet == 'nafs':
-                        # Convert NAFS to IPA for compatibility
+                    if alphabet == 'nefs':
+                        # Convert NEFS to IPA for compatibility
                         try:
-                            # Decode NAFS bytes from hex string
+                            # Decode NEFS bytes from hex string
                             nefs_bytes = bytes.fromhex(ph_value)
                             ipa_text = self.nefs_converter.nafs_to_ipa(nefs_bytes)
 
@@ -82,42 +82,42 @@ class SSMLNEFSProcessor:
                             phoneme_elem.set('alphabet', 'ipa')
                             phoneme_elem.set('ph', ipa_text)
 
-                            nafs_conversions.append({
-                                'original_nafs': ph_value,
+                            nefs_conversions.append({
+                                'original_nefs': ph_value,
                                 'converted_ipa': ipa_text,
                                 'text': phoneme_elem.text or ''
                             })
                         except Exception as e:
-                            logging.warning(f"Failed to convert NAFS phoneme {ph_value}: {e}")
+                            logging.warning(f"Failed to convert NEFS phoneme {ph_value}: {e}")
 
             # Convert back to string
             processed_ssml = ET.tostring(root, encoding='unicode')
 
             return {
                 'processed_ssml': processed_ssml,
-                'nafs_conversions': nafs_conversions,
-                'conversion_count': len(nafs_conversions)
+                'nefs_conversions': nefs_conversions,
+                'conversion_count': len(nefs_conversions)
             }
 
         except ET.ParseError as e:
             logging.error(f"SSML parsing error: {e}")
             return {
                 'processed_ssml': ssml_text,
-                'nafs_conversions': [],
+                'nefs_conversions': [],
                 'conversion_count': 0,
                 'error': str(e)
             }
 
-    def create_nafs_ssml_example(self, text: str, nafs_phonemes: List[str]) -> str:
-        """Create example SSML with NAFS phoneme tags"""
+    def create_nefs_ssml_example(self, text: str, nefs_phonemes: List[str]) -> str:
+        """Create example SSML with NEFS phoneme tags"""
         words = text.split()
         ssml_parts = ['<speak xmlns="http://www.w3.org/2001/10/synthesis">']
 
         for i, word in enumerate(words):
-            if i < len(nafs_phonemes):
-                # Add NAFS phoneme tag
-                nafs_hex = nafs_phonemes[i]
-                ssml_parts.append(f'<phoneme alphabet="nafs" ph="{nafs_hex}">{word}</phoneme>')
+            if i < len(nefs_phonemes):
+                # Add NEFS phoneme tag
+                nefs_hex = nefs_phonemes[i]
+                ssml_parts.append(f'<phoneme alphabet="nefs" ph="{nefs_hex}">{word}</phoneme>')
             else:
                 ssml_parts.append(word)
 
@@ -150,12 +150,12 @@ class NEFSTTSWrapper:
             'total_processing_time': 0,
             'average_compression_ratio': 0,
             'ssml_requests': 0,
-            'nafs_phoneme_conversions': 0
+            'nefs_phoneme_conversions': 0
         }
 
     async def synthesize(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
         """
-        Main synthesis method with automatic NAFS optimization and SSML support
+        Main synthesis method with automatic NEFS optimization and SSML support
         """
         start_time = time.time()
 
@@ -164,10 +164,10 @@ class NEFSTTSWrapper:
             request.is_ssml = True
             self.stats['ssml_requests'] += 1
 
-            # Process SSML with NAFS phoneme tags
-            ssml_result = self.ssml_processor.process_ssml_with_nafs(request.text)
+            # Process SSML with NEFS phoneme tags
+            ssml_result = self.ssml_processor.process_ssml_with_nefs(request.text)
             request.text = ssml_result['processed_ssml']
-            self.stats['nafs_phoneme_conversions'] += ssml_result['conversion_count']
+            self.stats['nefs_phoneme_conversions'] += ssml_result['conversion_count']
 
         # Auto-detect and convert input format if not SSML
         if request.nefs_encoding is None and not request.is_ssml:
@@ -205,19 +205,19 @@ class NEFSTTSWrapper:
         ]
         return any(re.search(pattern, text, re.IGNORECASE) for pattern in ssml_patterns)
 
-    def create_nafs_ssml(self, text: str, phonetic_mappings: Dict[str, str] = None) -> str:
+    def create_nefs_ssml(self, text: str, phonetic_mappings: Dict[str, str] = None) -> str:
         """
-        Create SSML with NAFS phoneme tags
+        Create SSML with NEFS phoneme tags
 
         Args:
             text: Regular text to convert
-            phonetic_mappings: Optional dict mapping words to NAFS hex encodings
+            phonetic_mappings: Optional dict mapping words to NEFS hex encodings
 
         Returns:
-            SSML string with NAFS phoneme tags
+            SSML string with NEFS phoneme tags
         """
         if not phonetic_mappings:
-            # Auto-generate NAFS encodings
+            # Auto-generate NEFS encodings
             words = text.split()
             phonetic_mappings = {}
             for word in words:
@@ -231,8 +231,8 @@ class NEFSTTSWrapper:
 
         for i, word in enumerate(words):
             if word.lower() in phonetic_mappings:
-                nafs_hex = phonetic_mappings[word.lower()]
-                ssml_parts.append(f'<phoneme alphabet="nafs" ph="{nafs_hex}">{word}</phoneme>')
+                nefs_hex = phonetic_mappings[word.lower()]
+                ssml_parts.append(f'<phoneme alphabet="nefs" ph="{nefs_hex}">{word}</phoneme>')
             else:
                 ssml_parts.append(word)
 
@@ -242,9 +242,9 @@ class NEFSTTSWrapper:
         ssml_parts.append('</speak>')
         return ''.join(ssml_parts)
 
-    def validate_nafs_ssml(self, ssml_text: str) -> Dict:
+    def validate_nefs_ssml(self, ssml_text: str) -> Dict:
         """
-        Validate SSML with NAFS phoneme tags
+        Validate SSML with NEFS phoneme tags
 
         Returns:
             Dictionary with validation results and any issues found
@@ -253,8 +253,8 @@ class NEFSTTSWrapper:
             'is_valid': True,
             'errors': [],
             'warnings': [],
-            'nafs_tags_found': 0,
-            'nafs_tags_validated': 0
+            'nefs_tags_found': 0,
+            'nefs_tags_validated': 0
         }
 
         try:
@@ -264,26 +264,26 @@ class NEFSTTSWrapper:
 
             root = ET.fromstring(ssml_text)
 
-            # Validate NAFS phoneme tags
+            # Validate NEFS phoneme tags
             for phoneme_elem in root.iter():
                 if phoneme_elem.tag.endswith('phoneme'):
                     alphabet = phoneme_elem.get('alphabet', '').lower()
                     ph_value = phoneme_elem.get('ph', '')
 
-                    if alphabet == 'nafs':
-                        validation_result['nafs_tags_found'] += 1
+                    if alphabet == 'nefs':
+                        validation_result['nefs_tags_found'] += 1
 
-                        # Validate NAFS encoding
+                        # Validate NEFS encoding
                         try:
                             nefs_bytes = bytes.fromhex(ph_value)
                             # Attempt conversion to verify validity
                             self.nefs_converter.nafs_to_ipa(nefs_bytes)
-                            validation_result['nafs_tags_validated'] += 1
+                            validation_result['nefs_tags_validated'] += 1
                         except ValueError:
-                            validation_result['errors'].append(f"Invalid NAFS hex encoding: {ph_value}")
+                            validation_result['errors'].append(f"Invalid NEFS hex encoding: {ph_value}")
                             validation_result['is_valid'] = False
                         except Exception as e:
-                            validation_result['errors'].append(f"NAFS conversion error for {ph_value}: {str(e)}")
+                            validation_result['errors'].append(f"NEFS conversion error for {ph_value}: {str(e)}")
                             validation_result['is_valid'] = False
 
         except ET.ParseError as e:
@@ -305,10 +305,10 @@ class NEFSTTSWrapper:
             response = await self.synthesize(request)
             yield response.audio_data
         else:
-            # Convert text to NAFS encoding in chunks
-            nafs_chunks = self._chunk_nefs_encoding(request.text)
+            # Convert text to NEFS encoding in chunks
+            nefs_chunks = self._chunk_nefs_encoding(request.text)
 
-            for chunk in nafs_chunks:
+            for chunk in nefs_chunks:
                 chunk_request = NEFSSynthesisRequest(
                     text="",
                     nefs_encoding=chunk,
@@ -322,7 +322,7 @@ class NEFSTTSWrapper:
                 yield response.audio_data
 
     def _optimize_input(self, text: str) -> bytes:
-        """Automatically optimize text input using NAFS encoding"""
+        """Automatically optimize text input using NEFS encoding"""
         if self._is_ipa_text(text):
             return self.nefs_converter.ipa_to_nafs(text)
         else:
@@ -338,7 +338,14 @@ class NEFSTTSWrapper:
         """Convert regular text to IPA - integration point for G2P systems"""
         return _g2p_text_to_ipa(text, lang='en-us', prefer='espeak')  # Use espeak as default for offline support
     def _generate_cache_key(self, request: NEFSSynthesisRequest) -> str:
-        """Generate unique cache key for request"""
+        """Generate unique cache key for request.
+
+        Uses MD5 purely as a fast, non-cryptographic hash for dictionary
+        keying.  ``usedforsecurity=False`` (Python 3.9+) suppresses the
+        ValueError raised on FIPS-enforced systems when MD5 is requested
+        for a security context.  We fall back to SHA-256 on older runtimes
+        where the keyword argument is not accepted.
+        """
         key_data = {
             'text': request.text if request.is_ssml else '',
             'nefs_encoding': request.nefs_encoding.hex() if request.nefs_encoding else '',
@@ -350,7 +357,12 @@ class NEFSTTSWrapper:
             'pitch': request.pitch,
             'is_ssml': request.is_ssml
         }
-        return hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
+        payload = json.dumps(key_data, sort_keys=True).encode()
+        try:
+            return hashlib.md5(payload, usedforsecurity=False).hexdigest()
+        except TypeError:
+            # Python < 3.9 does not accept usedforsecurity kwarg
+            return hashlib.md5(payload).hexdigest()
 
     async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
         """Core synthesis processing - integrates with TTS engine"""
@@ -366,7 +378,7 @@ class NEFSTTSWrapper:
             duration=len(request.text) * 0.1 if request.text else 1.0,
             metadata={
                 'compression_ratio': compression_ratio,
-                'nafs_size': len(request.nefs_encoding) if request.nefs_encoding else 0,
+                'nefs_size': len(request.nefs_encoding) if request.nefs_encoding else 0,
                 'original_size': len(request.text.encode()) if request.text else 0,
                 'is_ssml': request.is_ssml
             },
@@ -407,10 +419,10 @@ class PollyNEFSAdapter(NEFSTTSWrapper):
 
     async def _process_synthesis(self, request: NEFSSynthesisRequest) -> NEFSSynthesisResponse:
         if request.is_ssml:
-            # SSML is already processed - NAFS tags converted to IPA
+            # SSML is already processed - NEFS tags converted to IPA
             ssml_text = request.text
         else:
-            # Convert NAFS back to IPA for Polly processing
+            # Convert NEFS back to IPA for Polly processing
             ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
             ssml_text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
 
@@ -425,7 +437,7 @@ class AzureNEFSAdapter(NEFSTTSWrapper):
             # Use processed SSML directly
             ssml_text = request.text
         else:
-            # Convert NAFS to Azure-compatible format
+            # Convert NEFS to Azure-compatible format
             ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
             ssml_text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
 
@@ -439,7 +451,7 @@ class GoogleNEFSAdapter(NEFSTTSWrapper):
             # Google TTS with processed SSML
             ssml_text = request.text
         else:
-            # Google TTS integration with NAFS optimization
+            # Google TTS integration with NEFS optimization
             ipa_text = self.nefs_converter.nafs_to_ipa(request.nefs_encoding)
             ssml_text = f'<speak><phoneme alphabet="ipa" ph="{ipa_text}">text</phoneme></speak>'
 
@@ -453,13 +465,13 @@ from typing import Dict, List, Union
 class NEFSConverter:
     def __init__(self):
         self.ipa_to_nafs_dict, self.nafs_to_ipa_dict, self.affricate_dict = self._create_mappings()
-        self.nafs_to_affricate_dict = {}
-        for ipa, nafs_sequence in self.affricate_dict.items():
-            key = tuple(nafs_sequence)
-            self.nafs_to_affricate_dict[key] = ipa
+        self.nefs_to_affricate_dict = {}
+        for ipa, nefs_sequence in self.affricate_dict.items():
+            key = tuple(nefs_sequence)
+            self.nefs_to_affricate_dict[key] = ipa
 
     def _create_mappings(self):
-        nafs_grid = {
+        nefs_grid = {
             0x01: '.', 0x02: '\u0306', 0x03: '\u02D0', 0x04: '\u02E5',
             0x05: '\u02E6', 0x06: '\u02E7', 0x07: '\u02E8', 0x08: '\u02E9',
             0x09: '\u02E9\u02E5', 0x0A: '\u02E5\u02E9', 0x0B: '\u02E6\u02E5', 0x0C: '\u02E9\u02E8',
@@ -528,9 +540,9 @@ class NEFSConverter:
         }
         ipa_to_nafs = {}
         nafs_to_ipa = {}
-        for nafs_code, ipa_symbol in nafs_grid.items():
-            nafs_to_ipa[nafs_code] = ipa_symbol
-            ipa_to_nafs[ipa_symbol] = nafs_code
+        for nefs_code, ipa_symbol in nefs_grid.items():
+            nafs_to_ipa[nefs_code] = ipa_symbol
+            ipa_to_nafs[ipa_symbol] = nefs_code
         affricate_mappings = {
             # Affricates encoded as two-byte sequences: stop byte + fricative byte
             't\u0283': [0x43, 0x34],  # tʃ
@@ -555,22 +567,22 @@ class NEFSConverter:
                 if i + length <= len(ipa_string):
                     substring = ipa_string[i:i+length]
                     if substring in self.ipa_to_nafs_dict:
-                        nafs_code = self.ipa_to_nafs_dict[substring]
-                        if isinstance(nafs_code, list):
-                            result.extend(nafs_code)
+                        nefs_code = self.ipa_to_nafs_dict[substring]
+                        if isinstance(nefs_code, list):
+                            result.extend(nefs_code)
                         else:
-                            result.append(nafs_code)
+                            result.append(nefs_code)
                         i += length
                         matched = True
                         break
             if not matched:
                 char = ipa_string[i]
                 if char in self.ipa_to_nafs_dict:
-                    nafs_code = self.ipa_to_nafs_dict[char]
-                    if isinstance(nafs_code, list):
-                        result.extend(nafs_code)
+                    nefs_code = self.ipa_to_nafs_dict[char]
+                    if isinstance(nefs_code, list):
+                        result.extend(nefs_code)
                     else:
-                        result.append(nafs_code)
+                        result.append(nefs_code)
                     i += 1
                 else:
                     warnings.warn(f"Unmappable IPA character '{char}' at position {i}")
@@ -583,8 +595,8 @@ class NEFSConverter:
         while i < len(nefs_bytes):
             if i + 1 < len(nefs_bytes):
                 two_byte_key = (nefs_bytes[i], nefs_bytes[i+1])
-                if two_byte_key in self.nafs_to_affricate_dict:
-                    result.append(self.nafs_to_affricate_dict[two_byte_key])
+                if two_byte_key in self.nefs_to_affricate_dict:
+                    result.append(self.nefs_to_affricate_dict[two_byte_key])
                     i += 2
                     continue
             byte_val = nefs_bytes[i]
@@ -592,7 +604,7 @@ class NEFSConverter:
                 result.append(self.nafs_to_ipa_dict[byte_val])
                 i += 1
             else:
-                warnings.warn(f"Unmappable NAFS byte 0x{byte_val:02X} at position {i}")
+                warnings.warn(f"Unmappable NEFS byte 0x{byte_val:02X} at position {i}")
                 i += 1
         return ''.join(result)
     
@@ -646,15 +658,15 @@ async def example_nefs_ssml_usage():
 
     nefs_tts = create_nefs_adapter('polly', 'your-api-key')
 
-    # Example 1: Create SSML with NAFS phoneme tags
+    # Example 1: Create SSML with NEFS phoneme tags
     regular_text = "Hello world"
-    ssml_with_nafs = nefs_tts.create_nafs_ssml(regular_text)
-    print("Generated SSML with NAFS:")
-    print(ssml_with_nafs)
+    ssml_with_nefs = nefs_tts.create_nefs_ssml(regular_text)
+    print("Generated SSML with NEFS:")
+    print(ssml_with_nefs)
 
-    # Example 2: Process existing SSML with NAFS tags
+    # Example 2: Process existing SSML with NEFS tags
     ssml_request = NEFSSynthesisRequest(
-        text=ssml_with_nafs,
+        text=ssml_with_nefs,
         voice="neural-emma",
         language="en-US",
         format=AudioFormat.MP3,
@@ -665,7 +677,7 @@ async def example_nefs_ssml_usage():
     print(f"SSML synthesis completed in {response.processing_time}s")
 
     # Example 3: Validate NEFS SSML
-    validation = nefs_tts.validate_nafs_ssml(ssml_with_nafs)
+    validation = nefs_tts.validate_nefs_ssml(ssml_with_nefs)
     print(f"SSML validation: {validation}")
 
     # Get enhanced statistics

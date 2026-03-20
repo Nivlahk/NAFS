@@ -278,10 +278,19 @@ def train_nefs_tts(
     
     # Dataset
     dataset = LJSpeechNEFSDataset(data_dir, use_g2p_bootstrap=True)
+    # num_workers > 0 uses multiprocessing.  On Windows the default start
+    # method is 'spawn', which requires the DataLoader to be created inside
+    # a ``if __name__ == '__main__':`` guard — otherwise child processes
+    # re-import the module and re-execute top-level code.  On macOS with
+    # PyTorch >= 1.8 the same applies for 'spawn' (the default since 1.8).
+    # We detect the platform and fall back to 0 (in-process) where forking
+    # is unavailable to avoid silent hangs.
+    import multiprocessing
+    safe_num_workers = 0 if multiprocessing.get_start_method(allow_none=True) == 'spawn' else 4
     dataloader = DataLoader(
         dataset, batch_size=batch_size,
-        shuffle=True, num_workers=4,
-        collate_fn=collate_fn, pin_memory=True
+        shuffle=True, num_workers=safe_num_workers,
+        collate_fn=collate_fn, pin_memory=(str(device) != 'cpu'),
     )
     
     # Models

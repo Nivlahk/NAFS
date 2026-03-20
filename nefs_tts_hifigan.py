@@ -157,14 +157,19 @@ class NEFSProsodyPredictor(nn.Module):
         super().__init__()
         
         # Duration predictor (log-scale to handle variable lengths)
+        # Conv1d output shape: (batch, channels, time).
+        # nn.LayerNorm normalises over the *last* dimension, which is the time
+        # axis here — not channels — and is therefore incorrect.  GroupNorm
+        # operates over (channels, time) for a given group count, which is the
+        # right choice for 1-D convolutional stacks.
         self.duration_predictor = nn.Sequential(
             nn.Conv1d(input_dim, hidden_dim, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.LayerNorm(hidden_dim),
+            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
             nn.Dropout(0.1),
             nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.LayerNorm(hidden_dim),
+            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
             nn.Conv1d(hidden_dim, 1, kernel_size=1),
         )
         
@@ -172,7 +177,7 @@ class NEFSProsodyPredictor(nn.Module):
         self.f0_predictor = nn.Sequential(
             nn.Conv1d(input_dim, hidden_dim, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.LayerNorm(hidden_dim),
+            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
             nn.Conv1d(hidden_dim, 1, kernel_size=1),
         )
     
@@ -419,6 +424,34 @@ class NEFSHiFiGANSynthesizer(nn.Module):
             - 'nvidia_hifigan_ljspeech': NVIDIA's LJSpeech HiFi-GAN (22kHz, single speaker)
             - 'nvidia_hifigan_universal': Universal multi-speaker vocoder
             - 'hifigan_v1_ljspeech': Original author's checkpoint
+
+        Loading notes
+        -------------
+        The ``nvidia/DeepLearningExamples:torchhub`` torch.hub entry point was
+        deprecated and removed by NVIDIA.  Current recommended sources are:
+
+        * **Coqui TTS** (easiest, pip-installable)::
+
+              pip install TTS
+              from TTS.utils.manage import ModelManager
+              # downloads hifigan/ljspeech to ~/.local/share/tts/
+              model_manager = ModelManager()
+              model_path, _, _ = model_manager.download_model("vocoder_models/en/ljspeech/hifigan_v2")
+
+        * **ESPnet** — ``espnet2.bin.tts_inference`` ships HiFi-GAN vocoders.
+
+        * **VITS** (HuggingFace Transformers ≥ 4.33)::
+
+              from transformers import VitsModel
+              # VitsModel includes an integrated HiFi-GAN generator.
+
+        * **Original author's checkpoint** (raw PyTorch)::
+
+              # https://github.com/jik876/hifi-gan — download LJ_V1/ weights,
+              # load generator with their config.json + generator checkpoint.
+
+        Pass ``hifigan_generator`` directly to the constructor after loading
+        via one of the above methods, or subclass and override ``from_pretrained``.
         
         Args:
             model_name: Pretrained model identifier
@@ -433,19 +466,18 @@ class NEFSHiFiGANSynthesizer(nn.Module):
         
         # Load pretrained HiFi-GAN generator
         if model_name == 'nvidia_hifigan_ljspeech':
-            try:
-                # Load from torch.hub
-                hifigan = torch.hub.load(
-                    'nvidia/DeepLearningExamples:torchhub',
-                    'nvidia_hifigan',
-                    model_math='fp32',
-                    pretrained=True
-                )
-                hifigan_generator = hifigan
-            except Exception as e:
-                logger.error(f"Failed to load NVIDIA HiFi-GAN: {e}")
-                logger.info("Continuing without vocoder (encoder/prosody only)")
-                hifigan_generator = None
+            # The nvidia/DeepLearningExamples:torchhub torch.hub entry point
+            # was removed by NVIDIA and no longer works.  See from_pretrained
+            # docstring for current loading options.
+            logger.error(
+                "The NVIDIA torch.hub HiFi-GAN entry point has been removed. "
+                "Load a HiFi-GAN generator via Coqui TTS, ESPnet, the "
+                "HuggingFace VITS model, or the original author's checkpoint "
+                "(jik876/hifi-gan on GitHub), then pass it to the constructor "
+                "directly as hifigan_generator=<your_generator>. "
+                "See NEFSHiFiGANSynthesizer.from_pretrained docstring for details."
+            )
+            hifigan_generator = None
         
         elif model_name == 'nvidia_hifigan_universal':
             logger.warning("Universal HiFi-GAN requires speaker embeddings (not yet implemented)")

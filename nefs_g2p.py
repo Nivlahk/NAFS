@@ -44,18 +44,42 @@ _charsiu_loaded = False
 
 
 def _load_charsiu():
-    """Lazy-load CharsiuG2P model weights on first use."""
+    """Lazy-load CharsiuG2P model weights on first use.
+
+    Model notes
+    -----------
+    ``charsiu/g2p_multilingual_byT5_small_100`` is the canonical public
+    checkpoint (ByT5-small backbone, ~100 languages). If a newer checkpoint
+    becomes available under the ``charsiu`` HuggingFace org, set the env var
+    ``CHARSIU_MODEL`` to override.  The tokeniser must always be loaded from
+    ``google/byt5-small`` because ByT5 uses raw UTF-8 bytes as tokens and
+    ships no added vocabulary.
+
+    ``transformers`` compatibility
+    ------------------------------
+    ``early_stopping=True`` without an explicit beam count was silently
+    accepted before transformers 4.38 but now emits DeprecationWarning and
+    will become an error.  We use ``max_new_tokens`` (preferred over
+    ``max_length``) and omit ``early_stopping`` entirely — the default
+    stopping behaviour is correct for greedy / beam search.
+    """
     global _charsiu_model, _charsiu_tokenizer, _charsiu_loaded
     if _charsiu_loaded:
         return _charsiu_model is not None
     _charsiu_loaded = True
     try:
+        import os
         from transformers import T5ForConditionalGeneration, AutoTokenizer  # type: ignore
-        logger.info("Loading CharsiuG2P model (first use — downloading if needed)...")
-        _charsiu_tokenizer = AutoTokenizer.from_pretrained("google/byt5-small")
-        _charsiu_model = T5ForConditionalGeneration.from_pretrained(
-            "charsiu/g2p_multilingual_byT5_small_100"
+        model_name = os.environ.get(
+            "CHARSIU_MODEL", "charsiu/g2p_multilingual_byT5_small_100"
         )
+        logger.info(
+            f"Loading CharsiuG2P model '{model_name}' "
+            "(first use — downloading if needed)..."
+        )
+        # Tokeniser must come from the ByT5 base, not the fine-tuned checkpoint
+        _charsiu_tokenizer = AutoTokenizer.from_pretrained("google/byt5-small")
+        _charsiu_model = T5ForConditionalGeneration.from_pretrained(model_name)
         _charsiu_model.eval()
         logger.info("CharsiuG2P loaded successfully.")
         return True
@@ -94,11 +118,13 @@ def _g2p_charsiu(text: str, lang: str = "en-us") -> Optional[str]:
             padding=True,
         )
         with torch.no_grad():
+            # Use max_new_tokens (preferred over max_length in transformers ≥4.20).
+            # early_stopping=True without explicit beam constraints was deprecated
+            # in transformers 4.38 and will become an error — omit it entirely.
             outputs = _charsiu_model.generate(
                 **inputs,
-                max_length=512,
+                max_new_tokens=512,
                 num_beams=4,
-                early_stopping=True,
             )
         ipa = _charsiu_tokenizer.decode(outputs[0], skip_special_tokens=True)
         return ipa.strip()
@@ -110,6 +136,36 @@ def _g2p_charsiu(text: str, lang: str = "en-us") -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Tier 2 — espeak-ng via phonemizer (rule-based, 127 languages, no GPU)
 # ---------------------------------------------------------------------------
+
+def _check_espeak_binary() -> bool:
+    """Return True if a compatible espeak-ng binary is on PATH.
+
+    Compatibility notes
+    -------------------
+    * Linux/Windows: the binary is called ``espeak-ng``.
+    * macOS via Homebrew: ``brew install espeak-ng`` installs ``espeak-ng``.
+      The older ``brew install espeak`` formula installs the *original* eSpeak
+      (not eSpeak-NG) as ``espeak``, which phonemizer's ``"espeak"`` backend
+      will locate by name but may produce subtly different IPA output and lacks
+      many languages supported by eSpeak-NG.  We check for ``espeak-ng`` first
+      and fall back to ``espeak`` with a warning so callers know which binary
+      they got.
+    """
+    import shutil
+    if shutil.which("espeak-ng"):
+        return True
+    if shutil.which("espeak"):
+        logger.warning(
+            "Found 'espeak' binary but not 'espeak-ng'. "
+            "The original eSpeak (not eSpeak-NG) is installed. "
+            "phonemizer will use it, but language coverage and IPA accuracy "
+            "may differ from eSpeak-NG. "
+            "To install eSpeak-NG on macOS: brew install espeak-ng. "
+            "On Linux: sudo apt install espeak-ng."
+        )
+        return True
+    return False
+
 
 def _g2p_espeak(text: str, lang: str = "en-us") -> Optional[str]:
     """
@@ -128,6 +184,14 @@ def _g2p_espeak(text: str, lang: str = "en-us") -> Optional[str]:
     str or None
         IPA string, or None if phonemizer / espeak-ng is not installed.
     """
+    if not _check_espeak_binary():
+        logger.warning(
+            "espeak-ng (or espeak) binary not found on PATH. "
+            "Install with: sudo apt install espeak-ng  (Linux) | "
+            "brew install espeak-ng  (macOS) | "
+            "https://github.com/espeak-ng/espeak-ng/releases  (Windows)"
+        )
+        return None
     try:
         from phonemizer import phonemize  # type: ignore
         from phonemizer.separator import Separator  # type: ignore
