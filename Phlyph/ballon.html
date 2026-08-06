@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manner of Articulation - Zero-Gravity Fluid Simulator</title>
+  <style>
+    :root {
+      --bg-color: #0b0f19;
+      --card-bg: #151d30;
+      --accent: #38bdf8;
+      --text: #f8fafc;
+      --text-dim: #94a3b8;
+      --border: #26334d;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background-color: var(--bg-color);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      max-width: 800px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    header {
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 1.6rem;
+      color: var(--accent);
+      letter-spacing: -0.02em;
+    }
+
+    p.subtitle {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 0.95rem;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+    }
+
+    .btn {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      text-align: center;
+    }
+
+    .btn:hover {
+      border-color: var(--accent);
+      background: #1e2942;
+    }
+
+    .btn.active {
+      background: var(--accent);
+      color: #0b0f19;
+      border-color: var(--accent);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
+    }
+
+    .display-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    canvas {
+      background: #050811;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      width: 100%;
+      max-width: 700px;
+      height: auto;
+    }
+
+    .info-box {
+      width: 100%;
+      background: #050811;
+      border-left: 4px solid var(--accent);
+      padding: 14px 18px;
+      border-radius: 0 8px 8px 0;
+      box-sizing: border-box;
+    }
+
+    .info-title {
+      font-weight: bold;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .info-desc {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      line-height: 1.4;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Manner of Articulation Simulator</h1>
+    <p class="subtitle">Pure horizontal airflow mechanics (Zero Gravity)</p>
+  </header>
+
+  <div class="controls">
+    <button class="btn active" onclick="setManner('stop')">Stop / Plosive</button>
+    <button class="btn" onclick="setManner('fricative')">Fricative</button>
+    <button class="btn" onclick="setManner('approximant')">Approximant</button>
+    <button class="btn" onclick="setManner('trill')">Trill</button>
+    <button class="btn" onclick="setManner('tap')">Tap / Flap</button>
+  </div>
+
+  <div class="display-card">
+    <canvas id="simCanvas" width="700" height="320"></canvas>
+
+    <div class="info-box">
+      <div id="infoTitle" class="info-title">Stop / Plosive (/p/, /t/, /k/)</div>
+      <p id="infoDesc" class="info-desc">Complete closure traps air. Particles compress into a high-density state before bursting outward upon release.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('simCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Simulation State
+  let manner = 'stop';
+  let time = 0;
+  let particles = [];
+  let pressure = 0.2;
+  let gapSize = 0; // 0 = fully closed, 1 = open
+  let flapAngle = 0;
+
+  const manners = {
+    stop: {
+      title: "Stop / Plosive (/p/, /t/, /k/)",
+      desc: "Complete occlusion traps air. Particles compress into a high-density state before explosive pressure release."
+    },
+    fricative: {
+      title: "Fricative (/s/, /f/, /x/)",
+      desc: "A tight nozzle channel forces air into high-velocity streams with turbulent edge friction."
+    },
+    approximant: {
+      title: "Approximant (/w/, /j/, /l/)",
+      desc: "Wide channel width allows low-resistance laminar flow. Particles move straight through smoothly."
+    },
+    trill: {
+      title: "Trill (/r/ as in Spanish 'perro')",
+      desc: "Slowing down aerodynamic flutter so the rhythmic pulsing of the articulator opening and snapping shut is clearly visible."
+    },
+    tap: {
+      title: "Tap / Flap (/ɾ/ as in English 'latter')",
+      desc: "A single, clean, rapid strike where the articulator briefly touches the roof before returning to open position."
+    }
+  };
+
+  function setManner(m) {
+    manner = m;
+    document.querySelectorAll('.btn').forEach(btn => {
+      btn.classList.toggle('active', btn.innerText.toLowerCase().includes(m.replace('/', '')));
+    });
+    document.getElementById('infoTitle').innerText = manners[m].title;
+    document.getElementById('infoDesc').innerText = manners[m].desc;
+    time = 0;
+  }
+
+  function getNozzleGeometry() {
+    let gapPixels = gapSize * 55;
+    let centerY = 160;
+
+    let topWall = {
+      x1: 200, y1: 110,
+      x2: 380, y2: centerY - gapPixels / 2
+    };
+
+    let bottomWall = {
+      x1: 200, y1: 210,
+      x2: 380, y2: centerY + gapPixels / 2
+    };
+
+    return { topWall, bottomWall, gapPixels, centerY };
+  }
+
+  class Particle {
+    constructor(x, y, vx) {
+      this.x = x;
+      this.y = y;
+      this.vx = vx;
+      this.vy = 0; // Absolute ZERO initial vertical velocity (No gravity)
+      this.radius = Math.random() * 2.5 + 2;
+      this.life = 1.0;
+      this.decay = Math.random() * 0.005 + 0.003;
+    }
+
+    update(geom) {
+      // Straight horizontal motion (Zero gravity acceleration)
+      this.x += this.vx;
+      this.y += this.vy;
+
+      // Slight drag on x-axis, strong dampening on y-axis to kill vertical drift
+      this.vx *= 0.995;
+      this.vy *= 0.90;
+
+      this.life -= this.decay;
+
+      // --- BOUNDARY COLLISIONS & WALL REFLECTIONS ONLY ---
+
+      // 1. Chamber Rear Curved Wall
+      let dx = this.x - 170;
+      let dy = this.y - 160;
+      let dist = Math.sqrt(dx * dx + dy * dy);
+      let chamberRadius = 75 + pressure * 20;
+
+      if (this.x < 200 && dist > chamberRadius - this.radius) {
+        let nx = dx / dist;
+        let ny = dy / dist;
+        let dot = this.vx * nx + this.vy * ny;
+        this.vx = (this.vx - 2 * dot * nx) * 0.8;
+        this.vy = (this.vy - 2 * dot * ny) * 0.8;
+        this.x = 170 + nx * (chamberRadius - this.radius - 1);
+        this.y = 160 + ny * (chamberRadius - this.radius - 1);
+      }
+
+      // 2. Chamber Top/Bottom bounds
+      if (this.x < 200) {
+        if (this.y - this.radius < 160 - chamberRadius) {
+          this.y = 160 - chamberRadius + this.radius;
+          this.vy *= -0.8;
+        }
+        if (this.y + this.radius > 160 + chamberRadius) {
+          this.y = 160 + chamberRadius - this.radius;
+          this.vy *= -0.8;
+        }
+      }
+
+      // 3. Sloped Nozzle Walls
+      if (this.x >= 200 && this.x <= 380) {
+        let t = (this.x - 200) / 180;
+        
+        // Upper Wall
+        let wallY = geom.topWall.y1 + t * (geom.topWall.y2 - geom.topWall.y1);
+        if (this.y - this.radius < wallY) {
+          this.y = wallY + this.radius;
+          this.vy = Math.abs(this.vy) * 0.5;
+        }
+
+        // Lower Wall
+        let bWallY = geom.bottomWall.y1 + t * (geom.bottomWall.y2 - geom.bottomWall.y1);
+        if (this.y + this.radius > bWallY) {
+          this.y = bWallY - this.radius;
+          this.vy = -Math.abs(this.vy) * 0.5;
+        }
+      }
+
+      // 4. Occlusion Bounce (When sealed)
+      if (this.x >= 375 && this.x <= 385 && gapSize < 0.05) {
+        this.x = 374;
+        this.vx = -Math.abs(this.vx) * 0.85; // Bounces straight backward
+      }
+
+      // 5. Exit Channel Bounds
+      if (this.x > 380 && this.x < 460) {
+        let topY = 160 - geom.gapPixels / 2;
+        let botY = 160 + geom.gapPixels / 2;
+
+        if (this.y - this.radius < topY) {
+          this.y = topY + this.radius;
+          this.vy = Math.abs(this.vy) * 0.5;
+        }
+        if (this.y + this.radius > botY) {
+          this.y = botY - this.radius;
+          this.vy = -Math.abs(this.vy) * 0.5;
+        }
+      }
+    }
+
+    draw(ctx) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, this.life);
+      let speed = Math.abs(this.vx);
+      let hue = Math.max(0, 195 - speed * 12);
+      
+      ctx.fillStyle = `hsl(${hue}, 95%, 60%)`;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Horizontal velocity trail
+      if (speed > 3) {
+        ctx.strokeStyle = `hsl(${hue}, 95%, 60%)`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x - this.vx * 1.5, this.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  function updatePhysics() {
+    time += 0.03;
+    let geom = getNozzleGeometry();
+
+    switch (manner) {
+      case 'stop': {
+        let cycle = time % 4.5;
+        if (cycle < 3.2) {
+          gapSize = 0;
+          pressure = Math.min(1.0, pressure + 0.008);
+          if (particles.length < 220) {
+            particles.push(new Particle(120, 160 + (Math.random() - 0.5) * 40, Math.random() * 4 + 2));
+          }
+        } else {
+          gapSize = Math.min(1.0, (cycle - 3.2) * 4);
+          pressure = Math.max(0.1, pressure - 0.05);
+        }
+        break;
+      }
+      case 'fricative': {
+        gapSize = 0.12;
+        pressure = 0.8;
+        if (particles.length < 200) {
+          particles.push(new Particle(110, 160 + (Math.random() - 0.5) * 40, Math.random() * 5 + 3));
+        }
+        break;
+      }
+      case 'approximant': {
+        gapSize = 0.65;
+        pressure = 0.25;
+        if (particles.length < 140) {
+          particles.push(new Particle(110, 160 + (Math.random() - 0.5) * 50, Math.random() * 3 + 2));
+        }
+        break;
+      }
+      case 'trill': {
+        pressure = 0.85;
+        // SIGNIFICANTLY SLOWED DOWN: Frequency reduced from 38 to 10 for visual clarity
+        let trillPulse = Math.sin(time * 10); 
+        flapAngle = trillPulse * 0.18;
+        gapSize = trillPulse > 0 ? trillPulse * 0.35 + 0.02 : 0; 
+        
+        if (particles.length < 180) {
+          particles.push(new Particle(110, 160 + (Math.random() - 0.5) * 40, Math.random() * 5 + 2.5));
+        }
+        break;
+      }
+      case 'tap': {
+        let cycle = time % 2.5;
+        if (cycle > 1.0 && cycle < 1.3) {
+          let strikeProgress = Math.sin((cycle - 1.0) / 0.3 * Math.PI); // Single clean, smooth tap
+          gapSize = 0.65 * (1 - strikeProgress);
+          pressure = 0.35;
+        } else {
+          gapSize = 0.65;
+          pressure = 0.2;
+        }
+
+        if (particles.length < 130) {
+          particles.push(new Particle(110, 160 + (Math.random() - 0.5) * 50, Math.random() * 3 + 2));
+        }
+        break;
+      }
+    }
+
+    // Purely Horizontal Pressure Acceleration
+    particles.forEach(p => {
+      if (p.x < 380) {
+        p.vx += pressure * 0.35; // Purely pushes to the right (+X)
+      }
+      p.update(geom);
+    });
+
+    // Cleanup dead particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+      if (particles[i].life <= 0 || particles[i].x > canvas.width + 20) {
+        particles.splice(i, 1);
+      }
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let geom = getNozzleGeometry();
+
+    // 1. Draw Inflating Air Chamber
+    let chamberRadius = 75 + pressure * 20;
+    let chamberColor = `hsl(${195 - pressure * 150}, 85%, ${40 + pressure * 20}%)`;
+
+    ctx.save();
+    ctx.fillStyle = chamberColor;
+    ctx.shadowColor = chamberColor;
+    ctx.shadowBlur = pressure * 25;
+
+    ctx.beginPath();
+    ctx.arc(170, 160, chamberRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 2. Render Particles
+    particles.forEach(p => p.draw(ctx));
+
+    // 3. Draw Anatomical Wall Structure
+    ctx.fillStyle = '#1e293b';
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 3;
+
+    // TOP WALL
+    ctx.beginPath();
+    ctx.moveTo(170, 160 - chamberRadius);
+    ctx.lineTo(200, 110);
+    ctx.lineTo(380, 160 - geom.gapPixels / 2);
+    ctx.lineTo(460, 160 - geom.gapPixels / 2);
+    ctx.lineTo(460, 40);
+    ctx.lineTo(170, 40);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // BOTTOM WALL (WITH SLOWED TRILL ROTATION)
+    ctx.save();
+    if (manner === 'trill') {
+      ctx.translate(380, 160 + geom.gapPixels / 2);
+      ctx.rotate(flapAngle);
+      ctx.translate(-380, -(160 + geom.gapPixels / 2));
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(170, 160 + chamberRadius);
+    ctx.lineTo(200, 210);
+    ctx.lineTo(380, 160 + geom.gapPixels / 2);
+    ctx.lineTo(460, 160 + geom.gapPixels / 2);
+    ctx.lineTo(460, 280);
+    ctx.lineTo(170, 280);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // 4. Pressure Bar UI
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('INTRAORAL PRESSURE', 25, 25);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(25, 33, 140, 10);
+    ctx.fillStyle = chamberColor;
+    ctx.fillRect(25, 33, 140 * pressure, 10);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(25, 33, 140, 10);
+  }
+
+  function loop() {
+    updatePhysics();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  loop();
+</script>
+</body>
+</html>

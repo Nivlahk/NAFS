@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tessera — a featural script for the IPA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..600&family=Spectral:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#14110c;--ink2:#1b1711;--panel:#211b14;
+    --paper:#ece3d0;--dim:rgba(236,227,208,.56);--faint:rgba(236,227,208,.30);
+    --line:rgba(236,227,208,.13);--verm:#d24e2c;--gold:#cba353;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--ink);color:var(--paper);font-family:'Spectral',Georgia,serif;font-size:17px;line-height:1.55;
+    background-image:radial-gradient(circle at 14% -10%,rgba(210,78,44,.08),transparent 46%),radial-gradient(circle at 90% -4%,rgba(203,163,83,.06),transparent 44%);}
+  .topnav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+    padding:13px 24px;background:rgba(20,17,12,.85);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);border-bottom:1px solid var(--line);}
+  .topnav .brand{font-family:'Fraunces';font-weight:500;font-size:20px;color:var(--paper);text-decoration:none;letter-spacing:-.01em;}
+  .topnav .brand span{color:var(--verm);}
+  .topnav .navlinks{display:flex;gap:4px;}
+  .topnav .navlinks a{font-family:'Fraunces';font-size:14px;color:var(--dim);text-decoration:none;padding:7px 14px;border-radius:18px;transition:.15s;}
+  .topnav .navlinks a:hover{color:var(--paper);}
+  .topnav .navlinks a.cur{color:var(--gold);box-shadow:inset 0 0 0 1px var(--line);}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px 110px;}
+  header.hero{padding:84px 0 30px;}
+  .kicker{font-family:'Fraunces';font-weight:500;letter-spacing:.4em;text-transform:uppercase;font-size:12px;color:var(--verm);margin:0 0 18px;}
+  h1{font-family:'Fraunces';font-weight:300;font-size:clamp(52px,11vw,120px);line-height:.9;margin:0;letter-spacing:-.025em;}
+  h1 em{font-style:italic;color:var(--gold);}
+  .lede{max-width:640px;color:var(--dim);font-size:20px;margin:26px 0 0;}
+  .lede b{color:var(--paper);font-weight:500;}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:50px;}
+  @media(max-width:680px){.cards{grid-template-columns:1fr;}}
+  .card{display:block;text-decoration:none;color:inherit;background:var(--ink2);border:1px solid var(--line);border-radius:14px;
+    padding:30px 28px;transition:.18s;}
+  .card:hover{border-color:var(--gold);transform:translateY(-3px);}
+  .card .n{font-family:'Fraunces';font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--verm);}
+  .card h2{font-family:'Fraunces';font-weight:400;font-size:30px;margin:12px 0 8px;}
+  .card p{color:var(--dim);font-size:16px;margin:0;}
+  .card .go{margin-top:18px;color:var(--gold);font-family:'Fraunces';font-size:14px;}
+  .card .go:after{content:" \2192";}
+  .strip{margin-top:30px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;color:var(--faint);font-size:14px;border-top:1px solid var(--line);padding-top:22px;}
+  .strip a{color:var(--gold);text-decoration:none;border:1px solid var(--line);border-radius:18px;padding:7px 15px;font-family:'Fraunces';font-size:13px;transition:.15s;}
+  .strip a:hover{border-color:var(--gold);}
+  footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);color:var(--faint);font-size:13px;}
+  .tag{font-family:'Fraunces';color:var(--verm);}
+</style>
+</head>
+<body>
+<nav class="topnav"><a class="brand" href="index.html">Tessera<span>.</span></a><div class="navlinks"><a href="index.html" class="cur">Home</a><a href="slate.html">The Slate</a><a href="lab.html">The Lab</a><a href="consonants.html">Consonants</a><a href="vowels.html">Vowels</a><a href="mouthmap.html">Mouth Map</a><a href="guide.html">Guide</a></div></nav>
+
+<div class="wrap">
+<header class="hero">
+  <p class="kicker">A featural script for the IPA</p>
+  <h1>Tessera<em>.</em></h1>
+  <p class="lede">A writing system where every speech sound is <b>one square of overlaid feature-strokes</b> &mdash; place, manner, and voicing drawn as marks you can stack. Because the writing <em>is</em> the articulation, you can see why <span class="tag">p</span> and <span class="tag">b</span> differ by a single stroke &mdash; and now hear it too.</p>
+</header>
+
+<div class="cards">
+  <a class="card" href="slate.html">
+    <div class="n">I &middot; Compose</div>
+    <h2>The Slate</h2>
+    <p>Type or tap IPA and watch it resolve into Tessera, one square per phoneme. Hear the line in a built-in featural voice, and export your text as SVG or PNG.</p>
+    <div class="go">Open the Slate</div>
+  </a>
+  <a class="card" href="lab.html">
+    <div class="n">II &middot; Understand</div>
+    <h2>The Lab</h2>
+    <p>A phonetics teaching tool: take a sound apart stroke by stroke, hear minimal pairs one feature apart, light up the shared stroke of a natural class, and quiz yourself.</p>
+    <div class="go">Open the Lab</div>
+  </a>
+</div>
+
+<div class="strip">
+  <span>The same geometry also compiles to an installable font:</span>
+  <a href="Tessera.ttf" download>Download Tessera.ttf</a>
+</div>
+
+<footer>
+  <p>Tessera &mdash; strokes <em>are</em> features; sounds that pattern together share strokes. The built-in voice is a deliberately crude rule-based formant synth: it exists so a change you <em>see</em> is a change you <em>hear</em>, not to sound human.</p>
+</footer>
+</div>
+</body>
+</html>

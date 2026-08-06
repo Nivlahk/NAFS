@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Onset Timing — Phlyph</title>
+<style>
+  :root{
+    --bg:#0b0f19; --card:#151d30; --accent:#38bdf8; --voiced:#4ade80; --unvoiced:#e2e8f0;
+    --text:#f8fafc; --dim:#94a3b8; --border:#26334d;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;padding:24px;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    display:flex;flex-direction:column;align-items:center;}
+  .container{max-width:820px;width:100%;display:flex;flex-direction:column;gap:18px;}
+  header{text-align:center;}
+  h1{margin:0 0 6px;font-size:1.5rem;color:var(--accent);letter-spacing:-0.02em;}
+  p.subtitle{margin:0;color:var(--dim);font-size:0.92rem;}
+  .presets{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;}
+  .presets button{background:var(--card);border:1px solid var(--border);color:var(--text);
+    padding:10px 12px;border-radius:8px;cursor:pointer;font-weight:600;font-size:0.85rem;}
+  .presets button.active{background:var(--accent);color:#0b0f19;border-color:var(--accent);}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;
+    display:flex;flex-direction:column;gap:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4);}
+  canvas{background:#050811;border-radius:8px;border:1px solid var(--border);width:100%;max-width:680px;height:auto;display:block;margin:0 auto;}
+  .timeline{position:relative;height:64px;margin:0 auto;max-width:680px;width:100%;}
+  .track{position:absolute;top:28px;left:0;right:0;height:4px;background:#1e293b;border-radius:2px;}
+  .hatchmark{position:absolute;top:14px;width:2px;height:32px;background:var(--accent);}
+  .hatchlabel{position:absolute;top:0;font-size:11px;color:var(--accent);white-space:nowrap;transform:translateX(-50%);}
+  input[type=range]{position:absolute;top:16px;left:0;width:100%;margin:0;-webkit-appearance:none;background:transparent;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+    background:var(--voiced);cursor:grab;margin-top:-7px;box-shadow:0 0 8px rgba(74,222,128,0.6);}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;background:transparent;}
+  .igmark{position:absolute;bottom:0;font-size:11px;color:var(--voiced);white-space:nowrap;transform:translateX(-50%);}
+  .rowbtns{display:flex;gap:10px;justify-content:center;}
+  button.fire{background:var(--accent);color:#0b0f19;border:none;padding:12px 24px;border-radius:8px;
+    cursor:pointer;font-weight:700;font-size:0.95rem;}
+  button.fire:hover{opacity:0.9;}
+  .infobox{background:#050811;border-left:4px solid var(--accent);padding:12px 16px;border-radius:0 8px 8px 0;}
+  .infobox .t{font-weight:700;color:var(--accent);margin-bottom:2px;}
+  .infobox .d{color:var(--dim);font-size:0.88rem;line-height:1.4;margin:0;}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+  <h1>Voice onset timing<em>.</em></h1>
+  <p class="subtitle">The hatch (lips) always pops open at 0ms. The engine (vocal cords) can fire early, on time, or late.</p>
+</header>
+
+<div class="presets">
+  <button class="active" data-p="voiced" onclick="setPreset('voiced')">Voiced [b] — early ignition</button>
+  <button data-p="unaspirated" onclick="setPreset('unaspirated')">Unaspirated [p] — simultaneous</button>
+  <button data-p="aspirated" onclick="setPreset('aspirated')">Aspirated [pʰ] — delayed ignition</button>
+</div>
+
+<div class="card">
+  <canvas id="simCanvas" width="680" height="280"></canvas>
+
+  <div class="timeline" id="timeline">
+    <div class="track"></div>
+    <div class="hatchmark" style="left:40%;"></div>
+    <div class="hatchlabel" style="left:40%;">hatch open (0ms)</div>
+    <input type="range" id="ignSlider" min="-100" max="150" value="-50" step="1" oninput="onSlider()">
+    <div class="igmark" id="igmark">engine: -50ms</div>
+  </div>
+
+  <div class="rowbtns">
+    <button class="fire" onclick="fireCannon()">Fire cannon (slow motion)</button>
+  </div>
+
+  <div class="infobox">
+    <div class="t" id="fbTitle">Early ignition (-50ms)</div>
+    <p class="d" id="fbDesc">The engine starts glowing and vibrating while the hatch is still clamped shut. Sound is already trapped inside — when the hatch snaps open, voicing comes out on frame one.</p>
+  </div>
+</div>
+</div>
+
+<script>
+const canvas=document.getElementById('simCanvas');
+const ctx=canvas.getContext('2d');
+const slider=document.getElementById('ignSlider');
+const igmark=document.getElementById('igmark');
+const TL_MIN=-100, TL_MAX=150;
+
+const PRESETS={
+  voiced:{ign:-50,title:'Early ignition (-50ms)',
+    desc:'The engine starts glowing and vibrating while the hatch is still clamped shut. Sound is already trapped inside — when the hatch snaps open, voicing comes out on frame one.'},
+  unaspirated:{ign:0,title:'Simultaneous snap (0ms)',
+    desc:'Hatch pops open and the engine ignites at the exact same instant. A clean release with no unvoiced air escaping beforehand.'},
+  aspirated:{ign:80,title:'Delayed ignition (+80ms)',
+    desc:'Hatch snaps open, but the engine stays idle. High-pressure unvoiced air rushes out first — the puff of air you feel in aspirated [pʰ]. The engine only sparks to life after the delay.'}
+};
+
+function pctFromMs(ms){ return (ms-TL_MIN)/(TL_MAX-TL_MIN)*100; }
+function updateIgMark(){
+  const ms=parseInt(slider.value);
+  igmark.style.left=pctFromMs(ms)+'%';
+  igmark.textContent='engine: '+(ms>0?'+':'')+ms+'ms';
+}
+function feedbackFor(ms){
+  if(ms<-15) return {t:'Early ignition ('+ms+'ms)',d:'The engine starts glowing and vibrating while the hatch is still clamped shut. Sound is already trapped inside — when the hatch snaps open, voicing comes out on frame one.'};
+  if(ms>15) return {t:'Late ignition (+'+ms+'ms)',d:'Gas leaks out first! Unvoiced air rushes out the moment the hatch opens, and the engine only fires '+ms+'ms later — that gap is the puff of air in aspirated sounds.'};
+  return {t:'Simultaneous snap ('+ms+'ms)',d:'Hatch and engine fire at essentially the same instant. A clean release with almost no unvoiced air escaping beforehand.'};
+}
+function onSlider(){
+  updateIgMark();
+  document.querySelectorAll('.presets button').forEach(b=>b.classList.remove('active'));
+  const fb=feedbackFor(parseInt(slider.value));
+  document.getElementById('fbTitle').textContent=fb.t;
+  document.getElementById('fbDesc').textContent=fb.d;
+  resetSim();
+}
+function setPreset(name){
+  const p=PRESETS[name];
+  slider.value=p.ign;
+  updateIgMark();
+  document.querySelectorAll('.presets button').forEach(b=>b.classList.toggle('active',b.dataset.p===name));
+  document.getElementById('fbTitle').textContent=p.title;
+  document.getElementById('fbDesc').textContent=p.desc;
+  resetSim();
+}
+
+// --- simulation ---
+let particles=[];
+let playing=false, playT=TL_MIN, playRAF=null;
+const HATCH_X=280, ENGINE_X=110, ENGINE_Y=140;
+
+class Part{
+  constructor(x,y,vx,voiced){
+    this.x=x;this.y=y;this.vx=vx;this.vy=(Math.random()-0.5)*1.2;
+    this.r=Math.random()*2.5+2;this.life=1;this.decay=Math.random()*0.01+0.008;this.voiced=voiced;
+    this.phase=Math.random()*Math.PI*2;
+  }
+  update(){
+    this.x+=this.vx; this.y+=Math.sin(this.phase+this.x*0.05)*(this.voiced?1.4:0.4);
+    this.vx*=0.995; this.life-=this.decay;
+  }
+  draw(){
+    ctx.save(); ctx.globalAlpha=Math.max(0,this.life);
+    ctx.fillStyle=this.voiced?'#4ade80':'#cbd5e1';
+    if(this.voiced) { ctx.shadowColor='#4ade80'; ctx.shadowBlur=8; }
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function gapForMs(ms){
+  // hatch opens at ms=0 and stays open after
+  return ms<0?0:Math.min(1, ms/12);
+}
+function engineActive(ms, ignMs){ return ms>=ignMs; }
+
+function drawScene(ms, ignMs){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const gap=gapForMs(ms);
+  const active=engineActive(ms,ignMs);
+
+  // engine (throat)
+  const engR=26+(active?6:0);
+  ctx.save();
+  ctx.fillStyle=active?'#4ade80':'#1e293b';
+  if(active){ ctx.shadowColor='#4ade80'; ctx.shadowBlur=18; }
+  ctx.beginPath(); ctx.arc(ENGINE_X,ENGINE_Y,engR,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#475569'; ctx.lineWidth=2; ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle='#94a3b8'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('engine',ENGINE_X,ENGINE_Y+50);
+
+  // barrel walls
+  const gapPx=gap*50;
+  ctx.fillStyle='#1e293b'; ctx.strokeStyle='#475569'; ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(150,ENGINE_Y-40); ctx.lineTo(HATCH_X,ENGINE_Y-gapPx/2-8); ctx.lineTo(600,ENGINE_Y-gapPx/2-8); ctx.lineTo(600,60); ctx.lineTo(150,60); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(150,ENGINE_Y+40); ctx.lineTo(HATCH_X,ENGINE_Y+gapPx/2+8); ctx.lineTo(600,ENGINE_Y+gapPx/2+8); ctx.lineTo(600,220); ctx.lineTo(150,220); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle='#94a3b8'; ctx.font='11px sans-serif';
+  ctx.fillText('hatch',HATCH_X,ENGINE_Y+70);
+
+  // particles
+  particles.forEach(p=>p.draw());
+
+  // playhead readout
+  ctx.textAlign='left';
+  ctx.fillStyle='#94a3b8'; ctx.font='12px sans-serif';
+  ctx.fillText('t = '+Math.round(ms)+'ms',20,25);
+}
+
+function stepParticles(ms, ignMs){
+  const gap=gapForMs(ms);
+  if(gap>0.05 && Math.random()<0.6+gap*0.4){
+    const voiced=engineActive(ms,ignMs);
+    particles.push(new Part(HATCH_X, ENGINE_Y+(Math.random()-0.5)*30, Math.random()*3+3, voiced));
+  }
+  particles.forEach(p=>p.update());
+  for(let i=particles.length-1;i>=0;i--){ if(particles[i].life<=0||particles[i].x>680) particles.splice(i,1); }
+}
+
+function resetSim(){
+  particles=[];
+  const ignMs=parseInt(slider.value);
+  drawScene(TL_MIN, ignMs);
+}
+
+function fireCannon(){
+  if(playing) return;
+  playing=true; playT=TL_MIN; particles=[];
+  const ignMs=parseInt(slider.value);
+  function loop(){
+    if(!playing) return;
+    playT+=1.2;
+    stepParticles(playT, ignMs);
+    drawScene(playT, ignMs);
+    if(playT<TL_MAX){
+      playRAF=requestAnimationFrame(loop);
+    } else {
+      playing=false;
+    }
+  }
+  loop();
+}
+
+updateIgMark();
+resetSim();
+</script>
+</body>
+</html>
