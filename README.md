@@ -1,208 +1,197 @@
-# NEFS — New Engineered Featural Script
+# Phylph
 
-**NEFS** is a binary phonetic encoding system designed as a principled replacement for the International Phonetic Alphabet (IPA). Where IPA is a writing system that grew historically — symbols added piecemeal over more than a century — NEFS is engineered from the ground up with two goals: a more systematic organization of phonetic features, and a representation that is fast and parallelizable on modern hardware.
+Phonetics tooling built around a featural representation of speech sounds — a byte encoding for machines, and a script plus teaching site for humans.
 
----
+The repo holds three things that share one underlying idea: that a sound's phonological features should be visible in how it's written, whether the reader is a CPU or a student.
 
-## Why Not Just Use IPA?
-
-IPA is the gold standard for human-readable phonetic transcription, and NEFS is not trying to replace it for that purpose. The problems NEFS addresses are computational:
-
-- **Scattered Unicode codepoints.** IPA symbols live across dozens of Unicode blocks. Comparing, sorting, or searching IPA strings requires traversing variable-length UTF-8 sequences with no structural relationship between similar sounds.
-- **No encoded feature information.** In IPA, `p` and `b` look nothing alike, even though they differ by exactly one feature (voicing). A machine has no way to know this without a lookup table.
-- **Poor parallelism.** Because IPA strings are variable-length and have no fixed structure, bulk phonetic operations cannot easily be vectorized.
-
-NEFS encodes each phoneme as a **single byte**, with the byte value itself encoding phonological features. Similar sounds have numerically similar encodings. The result is a representation that fits in a fixed-width array, supports O(1) feature extraction, and can be processed in parallel across thousands of phonemes at once.
-
----
-
-## The Encoding
-
-NEFS uses a structured byte grid. Each byte encodes a phoneme, and the position of that byte in the grid encodes its features:
-
-- **Rows** encode manner of articulation (stops, fricatives, nasals, approximants, clicks, etc.)
-- **Columns** encode place of articulation (bilabial, labiodental, dental, alveolar, palatal, velar, uvular, glottal, etc.)
-- **Diacritics and modifiers** occupy dedicated byte ranges and can be applied as independent bytes in a sequence, similar to Unicode combining characters — but with explicit positional semantics
-
-Affricates are encoded as two-byte sequences where each byte is the corresponding stop and fricative component. For example, `tʃ` encodes as `[0x43, 0x34]` — `t` followed by `ʃ` — making the phonological structure of the affricate explicit in the encoding itself.
-
-Tones are assigned a dedicated byte range (`0x04`–`0x0C`) covering level, rising, falling, and contour tones, with systematic byte spacing that reflects tonal relationships.
-
-> **See the visual spec** (`spec/nefs-grid.png`) for the full byte grid and feature layout.
-> **See the font file** (`spec/nefs.ttf`) for the NEFS script glyphs, which are also featurally organized — the visual shape of each symbol reflects its phonological features.
-
----
-
-## The Two-Operation Guarantee
-
-NEFS makes a claim that no prior phonetic encoding system makes:
-
-> **Every phonological feature of every sound in the NEFS inventory is extractable by at most two logical operations on the encoding byte, with no auxiliary data structures required.**
-
-This is a direct consequence of the byte grid design and is worth understanding concretely.
-
-### What "two operations" means
-
-In IPA, determining that `p` and `b` differ only in voicing requires a lookup table — the symbols have no algebraic relationship. In NEFS, voicing is a single bit in the low nibble. Extracting it is one AND and one compare. Determining that two bytes represent a minimal pair differing only in voicing is one XOR.
-
-Every phonological feature works this way:
-
-| Operation | IPA cost | NEFS cost |
+| Part | What it is | State |
 |---|---|---|
-| Extract place of articulation | lookup table | `B >> 4` |
-| Extract manner of articulation | lookup table | `B & 0x0F` |
-| Extract voicing (stops) | lookup table | `B & 0x01` |
-| Extract modification class (plain/aspirated/NR) | lookup table | `(B >> 1) & 0x03` |
-| Extract vowel height | lookup table | `B & 0x0F` |
-| Test table membership (vowel/consonant/tone/etc.) | lookup table | at most two bitmask checks |
-| Minimal pair test (one feature difference) | two lookups + compare | `popcount(A ^ B) == 1` |
+| **NEFS** | A byte encoding for phonemes. Feature structure lives in the byte value. | Working, 79% IPA coverage |
+| **Tessera** | A featural script and font, plus a browser-based teaching site. | Working, in active use |
+| **TTS stack** | Experimental neural and formant synthesis driven by NEFS. | Research code, unstable |
 
-### Why the vowel range is 0x_4–0x_B
-
-This range was chosen specifically because it is the set of low nibble values where bits 3 and 2 differ — testable with a single XOR:
-
-```c
-int is_vowel = ((B >> 4) >= 0xA) && (((B >> 3) ^ (B >> 2)) & 1);
-```
-
-No range check on the low nibble is needed. The full table membership classification for all six NEFS regions requires at most two operations per region, with no lookup table at any point.
-
-### What this enables
-
-**Vectorized phonological search.** Any query over a phoneme corpus — "find all voiced stops," "find all front rounded vowels," "find all aspirated consonants" — compiles to at most two SIMD operations over the byte stream. On a CPU with 256-bit AVX registers that is 256 phonemes processed simultaneously per instruction pair. IPA requires a hash table lookup per symbol.
-
-**Phonological distance.** Computing phonetic similarity between two sounds — how many features separate them — is `popcount(A ^ B)`. No tables. This makes large-scale rhyme detection, dialect comparison, and speech error analysis fast enough to run in real time over large corpora.
-
-**Structured embeddings.** Neural TTS and ASR systems currently learn phoneme embeddings from scratch because IPA has no algebraic structure to exploit. NEFS byte values can seed phoneme embeddings directly from their feature structure, reducing training data requirements and improving generalization to low-resource languages.
-
-**Hardware.** A phoneme processing unit targeting NEFS can implement full feature extraction in two gate delays. For embedded and microcontroller targets — including [SEER](../SEER), a microcontroller ISA developed alongside NEFS — this means speech processing extensions can be implemented without dedicated lookup ROM.
-
-### Scope of the guarantee
-
-The two-operation guarantee applies to the final grid layout after the planned bitfield reorganization. The current grid is partially consistent with this property; until the reorganization is complete, implementations should use the lookup table in `NEFSConverter` rather than relying on bitfield arithmetic directly.
+Licensed GPL-3.0.
 
 ---
 
-## Relationship to IPA
+## Quickstart
 
-NEFS is designed to be **losslessly interconvertible with IPA** for all sounds in the NEFS inventory. The `NEFSConverter` class provides:
+The encoder has no dependencies beyond the standard library.
 
-```python
-from nefs import NEFSConverter
-
-converter = NEFSConverter()
-
-# IPA → NEFS
-nefs_bytes = converter.ipa_to_nefs("tʃ")   # → b'\x43\x34'
-
-# NEFS → IPA
-ipa_text = converter.nefs_to_ipa(b'\x43\x34')  # → 'tʃ'
-
-# Lossless round-trip verification
-assert converter.is_lossless("tʃ")  # True
+```bash
+git clone https://github.com/Nivlahk/Phylph
+cd Phylph
+python3
 ```
 
-Batch conversion is also supported for bulk processing:
-
 ```python
-results = converter.batch_convert(["tʃ", "dʒ", "ts"], direction='ipa_to_nefs')
+from nefs_converter import NEFSConverter, place, manner, is_voiced, phoneme_class
+
+c = NEFSConverter()
+
+c.ipa_to_nefs("tʃ")            # b'\x43\x51'  — t, then ʃ
+c.nefs_to_ipa(b'\x43\x51')     # 'tʃ'
+c.is_lossless("tʃ")            # True
+
+c.stats()
+# {'nefs_to_ipa': 203, 'ipa_to_nefs': 202, 'affricates': 8, 'coverage_pct': 79.3}
+
+place(0x43)                    # 4  — alveolar
+manner(0x43)                   # 3
+is_voiced(0x43)                # False  (0x42 is 'd')
+phoneme_class(0x43)            # consonant
 ```
+
+To browse the teaching site, serve the repo root and open `Phlyph/index.html`:
+
+```bash
+python3 -m http.server 8000
+# then visit http://localhost:8000/Phlyph/
+```
+
+The TTS scripts need a much heavier environment — see [TTS stack](#tts-stack) below.
 
 ---
 
-## SSML Integration
+## NEFS — the encoding
 
-NEFS phoneme tags can be embedded in SSML for use with text-to-speech engines. The `NEFSTTSWrapper` handles conversion from NEFS-tagged SSML to IPA-tagged SSML before passing to downstream TTS providers (Amazon Polly, Azure TTS, Google Cloud TTS).
+Each phoneme is one byte. The byte's value encodes its features, so sounds that are phonologically similar are numerically similar.
+
+- **High nibble** selects the place column (`0x1_` bilabial, `0x2_` labiodental, `0x3_` dental, `0x4_` alveolar, `0x5_` post-alveolar, `0x6_` retroflex, `0x7_` palatal, and so on). `0x0_` is reserved for diacritics.
+- **Low nibble** selects the manner row within that column, with voicing distinguished in the low bit for stops and fricatives.
+
+So `t` is `0x43` and `d` is `0x42` — a single bit apart, because voicing is a single bit. Feature comparison becomes arithmetic:
 
 ```python
-from nefs.tts import create_nefs_adapter, AudioFormat, NEFSQuality, NEFSSynthesisRequest
-
-tts = create_nefs_adapter('polly', api_key='...')
-
-# Auto-generate SSML with NEFS phoneme tags
-ssml = tts.create_nefs_ssml("Hello world")
-
-# Synthesize
-response = await tts.synthesize(NEFSSynthesisRequest(
-    text=ssml,
-    voice="neural-emma",
-    language="en-US",
-    format=AudioFormat.MP3,
-    quality=NEFSQuality.NEURAL
-))
+bin(0x43 ^ 0x42).count("1") == 1   # t and d are a minimal pair
 ```
 
-> **Note:** The TTS wrapper is an integration layer. The core of this project is the encoding system and converter. The `_process_synthesis` method is currently stubbed for testing; real provider API calls require valid credentials and are implemented per adapter.
+**Affricates** are two-byte sequences of their stop and fricative components, which keeps the phonological structure explicit: `tʃ` is `0x43 0x51`, not an opaque third symbol.
+
+**Tones** occupy a dedicated byte range covering level, rising, falling, and contour tones.
+
+Current inventory: 203 byte→IPA mappings, 202 in the reverse direction, 8 affricates, at 79.3% of the target grid. The gaps are mostly rarer diacritics and the sparser place columns.
+
+### Why bother
+
+IPA is the right tool for human transcription and NEFS does not try to replace it there. The problems NEFS targets are computational:
+
+- IPA symbols are scattered across many Unicode blocks as variable-length UTF-8, so there is no structural relationship between similar sounds.
+- Nothing in the encoding of `p` and `b` reveals that they differ by one feature. A machine needs a lookup table.
+- Variable-length symbols make bulk phonological operations hard to vectorize.
+
+With a fixed-width feature-bearing byte, queries like *find all voiced stops* become mask-and-compare over a byte array, and phonological distance between two sounds becomes a popcount of their XOR. That's the argument. It has not yet been benchmarked against a tuned IPA lookup implementation, and until it has, treat the speedup as a design rationale rather than a measured result.
+
+### On the "two operation" property
+
+An earlier version of this document claimed that every phonological feature is extractable in at most two logical operations with no auxiliary structures. That is the **design target for the grid, not a description of the current one**.
+
+Place and manner do extract in one operation each (`b >> 4`, `b & 0x0F`), and voicing for stops is one mask. But the grid has grown unevenly, several regions are not yet bitfield-consistent, and table membership tests currently need more than two operations. A bitfield reorganization to close the gap is planned but not done.
+
+Until then, use `NEFSConverter` and the helper functions in `nefs_converter.py` rather than doing bitfield arithmetic against the raw bytes yourself. The helpers will keep working across the reorganization; hand-rolled masks will not.
 
 ---
 
-## Coverage
+## Tessera — the script and teaching site
 
-```python
-converter = NEFSConverter()
-stats = converter.get_stats()
-# {
-#   'total_ipa_mappings': ...,
-#   'total_nafs_mappings': ...,
-#   'affricate_mappings': 8,
-#   'hex_coverage_percent': ...
-# }
-```
+Tessera is a featural script for the IPA, aimed at English speakers learning new sounds. Glyph shape reflects phonological features, so a learner can see what changes between two sounds instead of memorizing unrelated symbols.
 
-The encoding currently covers the full IPA consonant chart, vowel chart, tones, and common diacritics. Coverage is ongoing — see [open issues](#) for planned additions.
+`Phlyph/` is a static site — plain HTML, CSS, and JavaScript, no build step:
+
+| Page | What it does |
+|---|---|
+| `index.html` | Entry point and overview of the script |
+| `consonants.html` | English consonant grid rendered in Tessera |
+| `vowels.html` | English vowel grid rendered in Tessera |
+| `mouthmap.html` | English consonants arranged by place of articulation |
+| `lab.html` | Build a sound feature by feature and watch the glyph change |
+| `slate.html` | Type in IPA, see it in Tessera |
+| `vot-simulator.html` | Interactive voice onset timing |
+| `ballon.html` | Manner of articulation as a fluid simulation |
+| `mandarin-sounds.html` | Mandarin sounds pitched at English speakers |
+
+`Phlyph/Place Images/` holds sagittal articulation diagrams for the ten major places. `Phlyph/Tessera.ttf` is the font the pages render with.
+
+Additional fonts live in `NAFS(Font)/`, `HEXD/`, and `NIVLAC(Font)/`, each with a cheat sheet.
 
 ---
 
-## Project Structure
+## TTS stack
 
-```
-nefs/
-├── nefs/
-│   ├── converter.py       # NEFSConverter — core IPA↔NEFS encoding
-│   ├── tts/
-│   │   ├── wrapper.py     # NEFSTTSWrapper — SSML processing and TTS integration
-│   │   └── adapters.py    # Provider adapters (Polly, Azure, Google)
-│   └── ssml.py            # SSMLNEFSProcessor — SSML parsing and NEFS tag handling
-├── spec/
-│   ├── nefs-grid.png      # Visual byte grid and feature layout  [coming soon]
-│   └── nefs.ttf           # NEFS script font                     [coming soon]
-├── tests/
-└── README.md
-```
+Experimental, and the least finished part of the repo. NEFS is used as the phoneme representation feeding several synthesis paths.
+
+| File | Role |
+|---|---|
+| `nefs_g2p.py` | Grapheme to phoneme, text → IPA → NEFS |
+| `nefs_wrapper.py` | SSML processing and TTS provider adapters |
+| `nefs_klatt.py` | Klatt formant synthesizer |
+| `nefs_tts_hifigan.py`, `nefs_hifigan_discriminator.py` | Neural vocoder |
+| `nefs_param_predictor.py`, `nefs_prosody_extractor.py` | Synthesis parameter and prosody models |
+| `nefs_espeak_rt.py`, `nefs_espeak_bootstrap.py` | eSpeak backend and bootstrapping |
+| `nefs_polly_backend.py`, `nefs_polly_postprocess.py` | Amazon Polly integration |
+| `train_nefs_tts.py`, `train_nefs_predictor.py` | Training entry points, see `TRAINING_GUIDE.md` |
+
+Requires `torch`, `torchaudio`, `transformers`, `librosa`, `crepe`, `scipy`, `numpy`, `soundfile`, `sounddevice`, `textgrid`, `tqdm`, plus `boto3` for Polly and `epitran`/`phonemizer` for G2P. There is no pinned requirements file yet.
+
+Cloud provider adapters need credentials. The base `_process_synthesis` is a stub; each provider adapter overrides it.
+
+---
+
+## Also in the repo
+
+- `nefs_converter.c` — C implementation of the encoding grid. Note that its header comment describes the nibble layout differently from the Python version; the Python module is authoritative until they're reconciled.
+- `NEFS_Specification_v3.docx` — the fullest written spec.
+- `NAFS_Complete_Guide.md` — script guide.
+- `Syllabic bytes.png` — syllable-level byte layout.
+- `nefs_demo.html` — standalone encoding demo.
+- `nefs_testsuite.py` — TTS benchmarking harness. Standard library only, but it exercises the wrapper rather than the core converter.
+
+---
+
+## Naming
+
+The project has accumulated several names and they are being consolidated. Current intent:
+
+- **Phylph** — the project and repo
+- **NEFS** — the byte encoding
+- **Tessera** — the script, font, and teaching site
+
+`NAFS` appears throughout the older code and documents as a prior name for NEFS. The two are the same system. The `Phlyph/` directory name is a leftover transposition of `Phylph` and will be renamed.
 
 ---
 
 ## Status
 
-NEFS is an active work in progress.
-
-| Component | Status |
+| Component | State |
 |---|---|
-| Core encoding grid | ✅ Complete |
-| IPA ↔ NEFS converter | ✅ Complete |
-| Lossless round-trip verification | ✅ Complete |
-| Affricate encoding | ✅ Complete |
-| Tone encoding | ✅ Complete |
-| SSML integration | ✅ Complete |
-| TTS provider adapters | 🔧 Stubbed (integration pending) |
-| Visual spec / font | 🔧 In progress |
-| G2P integration (text → IPA → NEFS) | 📋 Planned |
-| Full diacritic coverage | 📋 Planned |
+| IPA ↔ NEFS converter | Working, lossless round-trip verified |
+| Encoding grid | 79.3% coverage, bitfield reorganization pending |
+| Affricate and tone encoding | Working |
+| C implementation | Working, nibble docs need reconciling with Python |
+| Tessera font and teaching site | Working, in active use |
+| SSML processing | Working |
+| TTS provider adapters | Credentials required, base synthesis stubbed |
+| G2P pipeline | Experimental |
+| Neural synthesis | Research code, unstable |
+| Formal written spec | Only in `.docx`, needs a Markdown version |
+| Benchmarks | None yet |
+| Packaging and tests | None yet |
 
 ---
 
 ## Contributing
 
-Contributions are welcome, especially from those with backgrounds in linguistics, phonetics, or systems programming. Before contributing, please read the visual spec (`spec/nefs-grid.png`) to understand the design principles behind the byte grid — PRs that add phonemes should follow the existing row/column layout logic rather than appending arbitrarily.
+Most useful right now:
 
-Issues and discussion are open for:
-- Sounds not yet in the inventory
-- Edge cases in IPA conversion
-- Performance benchmarks
-- The formal spec (currently the code and visual spec together constitute the spec)
+- **Filling the grid.** Missing phonemes should follow the existing place-column and manner-row logic rather than taking the next free byte. Read `NEFS_Specification_v3.docx` first.
+- **Benchmarks.** The performance case for NEFS is currently theoretical. A comparison against a tuned IPA hash-table implementation would either support it or kill it, and both outcomes are useful.
+- **Conversion edge cases.** Round-trip failures and IPA sequences that don't map cleanly.
+- **Repo hygiene.** A `.gitignore`, a `requirements.txt`, a real test suite for the converter, and a proper Python package layout.
+
+Open an issue before large structural changes so we don't collide on the grid reorganization.
 
 ---
 
 ## License
 
-[To be added]
+GNU General Public License v3.0. See [LICENSE](LICENSE).
